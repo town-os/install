@@ -1,0 +1,18 @@
+# vim: ft=systemd
+[Unit]
+Description=Gild is an API agent for Town OS
+DefaultDependencies=yes
+Requires=buckle.service
+Requires=charon.service
+After=buckle.service
+After=charon.service
+
+[Service]
+Type=exec
+ExecStartPre=-mkdir -p /town-os/gild
+ExecStartPre=-/usr/bin/podman rm -f gild
+ExecStart=/usr/bin/podman run --pull=always --name gild -p 5309:5309 --volumes-from buckle --security-opt label=disable -v /town-os:/town-os:shared quay.io/town-os/gild:latest
+Restart=always
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,18 @@
+# vim: ft=systemd
+[Unit]
+Description=Buckle is an agent to control individual systems for Town OS
+DefaultDependencies=yes
+Requires=network-online.target
+Requires=make-storage.service
+After=network-online.target
+After=make-storage.service
+
+[Service]
+Type=exec
+ExecStartPre=-mkdir -p /town-os/socket
+ExecStartPre=-/usr/bin/podman rm -f buckle
+ExecStart=/usr/bin/podman run --pull=always -it --privileged --name buckle --security-opt label=disable --net host --pid host -v /etc/systemd:/etc/systemd -v /town-os:/town-os:shared -v /var/run/dbus:/var/run/dbus -v /var/log/journal:/var/log/journal:ro -v /var/log:/var/log:ro -v /run/log:/run/log:ro -v /run/systemd:/run/systemd:ro quay.io/town-os/buckle:latest
+Restart=always
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,26 @@
+# town-os.yaml — Town OS configuration
+#
+# This file controls how Town OS is built and how it behaves at boot.
+# It is copied into the image at /usr/lib/town-os/town-os.yaml during install
+# and read by the storage provisioning scripts at boot time.
+#
+# Contributors: please document any new settings you add here with a comment
+# explaining what the setting does, its valid values, and its default.
+
+# storage_backend: which filesystem to use for the Town OS storage pool.
+#   btrfs — Use btrfs (default). Lightweight, no kernel module dependency.
+#   zfs   — Use ZFS. Requires the ZFS kernel module (linux618-zfs).
+storage_backend: btrfs
+
+# btrfs_raid_mode: how to handle multi-disk redundancy when storage_backend is btrfs.
+#   native — Use btrfs built-in raid profiles (default).
+#            1 disk: single, 2 disks: raid1, 3+ disks: raid5 data / raid1 metadata.
+#   mdadm  — Create an mdadm array first, then format the array device as btrfs.
+#            Useful if you prefer md-raid for redundancy management.
+# This setting is ignored when storage_backend is zfs.
+btrfs_raid_mode: native
+
+# vm_disk_size: size of each virtual disk created by `make qemu` or `make virtualbox`.
+#   Disks are sparse files, so they only consume space as data is written.
+#   Any value accepted by `truncate -s` works (e.g. 50G, 100G, 200G).
+vm_disk_size: 50G
