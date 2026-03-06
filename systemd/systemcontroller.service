@@ -1,0 +1,31 @@
+# vim: ft=systemd
+[Unit]
+Description=Town OS System Controller
+DefaultDependencies=yes
+Requires=network-online.target
+Requires=make-storage.service
+After=network-online.target
+After=make-storage.service
+
+[Service]
+Type=exec
+ExecStartPre=-/usr/bin/podman rm -f systemcontroller
+ExecStart=/usr/bin/podman run --pull=always \
+    --name systemcontroller \
+    --privileged \
+    --security-opt label=disable \
+    --net host \
+    --pid host \
+    -v /etc/systemd:/etc/systemd \
+    -v /usr/lib/systemd:/usr/lib/systemd \
+    -v /run/systemd:/run/systemd \
+    -v /run/dbus:/run/dbus \
+    -v /dev:/dev \
+    -v /town-os:/town-os:shared \
+    -v /town-os-pool:/town-os-pool:shared \
+    -v /var/log:/var/log \
+    quay.io/town/town:latest
+Restart=always
+
+[Install]
+WantedBy=default.target

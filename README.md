@@ -5,6 +5,39 @@ Builds a bootable Town OS image and launches it in a VM.
 For more information, visit the [Town OS website](https://town-os.github.io) or
 the [source repository](https://gitea.com/town-os/town-os).
 
+## Dependencies
+
+The build host must be Arch-based (Arch Linux or Manjaro).
+
+### Required (image build)
+
+| Package                | Provides                                      | Install                              |
+|------------------------|-----------------------------------------------|--------------------------------------|
+| `base-devel`           | `make`, core build tools                      | `pacman -S base-devel`               |
+| `arch-install-scripts` | `pacstrap`, `genfstab`, `arch-chroot`         | `pacman -S arch-install-scripts`     |
+| `parted`               | `parted`, `partprobe`                         | `pacman -S parted`                   |
+| `util-linux`           | `losetup`, `mountpoint`, `truncate`, `mount`  | included in base                     |
+| `e2fsprogs`            | `mkfs.ext4`                                   | `pacman -S e2fsprogs`                |
+| `dosfstools`           | `mkfs.fat`                                    | `pacman -S dosfstools`               |
+| `rsync`                | `rsync`                                       | `pacman -S rsync`                    |
+| `psmisc`               | `fuser`                                       | `pacman -S psmisc`                   |
+| `lsof`                 | `lsof`                                        | `pacman -S lsof`                     |
+
+### Optional (VM targets)
+
+| Package                         | Provides             | Install                               |
+|---------------------------------|----------------------|---------------------------------------|
+| `qemu-full` or `qemu-system-x86` | `qemu-system-x86_64` | `pacman -S qemu-full`                |
+| `virtualbox`                    | `VBoxManage`         | `pacman -S virtualbox`                |
+
+### Install all required dependencies
+
+```
+make deps
+```
+
+For QEMU support add `qemu-full`. For VirtualBox support add `virtualbox`.
+
 ## Usage
 
 ```
@@ -18,9 +51,10 @@ make cleanup-loopback  # emergency loopback cleanup
 
 | Target              | Description                                              |
 |---------------------|----------------------------------------------------------|
-| `build-image`       | Build the raw disk image (default target)                |
+| `image`             | Build the raw disk image (default target)                |
 | `qemu`              | Build image, create sparse data disks, launch QEMU       |
 | `virtualbox`        | Build image, create VBox VM with VDI disks, launch it    |
+| `deps`              | Install required build dependencies via pacman            |
 | `cleanup-loopback`  | Kill processes on loopback mounts and detach all loops    |
 
 ### Tunable variables
@@ -73,8 +107,8 @@ The install script performs the following steps:
 4. **Configure the system** — Inside the chroot the configure script:
    - Sets the root password, locale, timezone, and hostname (`town-os`).
    - Installs the Charon control-plane binary from source via Cargo.
-   - Enables systemd services: storage provisioning, buckle, charon, gild,
-     panel, avahi, networkd, and resolved.
+   - Enables systemd services: storage provisioning, the system controller
+     (`quay.io/town/town:latest`), avahi, networkd, and resolved.
    - Writes a DHCP network configuration for ethernet interfaces.
    - Sets the GRUB distributor to Town OS.
 

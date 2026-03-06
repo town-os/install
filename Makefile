@@ -6,12 +6,11 @@ VM_DISK_SIZE ?= $(shell grep '^vm_disk_size:' town-os.yaml \
 VM_MEMORY   ?= 4G
 VM_NAME     ?= town-os
 
-.PHONY: build-image qemu virtualbox cleanup-loopback
+.PHONY: image qemu virtualbox cleanup-loopback deps
 
-build-image: $(IMAGE)
-
-$(IMAGE):
-	sudo ./install.sh $(IMAGE_SIZE) $(IMAGE)
+# this image should be rebuildable every time
+image:
+	sudo -E ${PWD}/install.sh $(IMAGE_SIZE) $(IMAGE)
 
 qemu: $(IMAGE)
 	@for i in 0 1 2 3; do \
@@ -59,7 +58,10 @@ virtualbox: $(IMAGE)
 	done
 	VBoxManage startvm $(VM_NAME)
 
+deps:
+	sudo -E pacman -S --needed base-devel arch-install-scripts parted e2fsprogs dosfstools rsync psmisc lsof
+
 cleanup-loopback:
-	mount | grep loop | awk '{ print $$3 }' | xargs -I{} sudo fuser -cfk {} || :
-	mount | grep loop | awk '{ print $$3 }' | xargs -I{} sudo umount -Rf {} || :
-	sudo losetup -D
+	mount | grep loop | awk '{ print $$3 }' | xargs -I{} sudo -E fuser -cfk {} || :
+	mount | grep loop | awk '{ print $$3 }' | xargs -I{} sudo -E umount -Rf {} || :
+	sudo -E losetup -D
