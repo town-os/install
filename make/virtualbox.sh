@@ -18,8 +18,9 @@ done
 
 VBoxManage unregistervm "${VM_NAME}" --delete 2>/dev/null || true
 VBoxManage createvm --name "${VM_NAME}" --ostype Linux_64 --register
+MAC=$(echo "${VM_NAME}" | md5sum | sed 's/^\(..\)\(..\)\(..\).*/525400\1\2\3/')
 VBoxManage modifyvm "${VM_NAME}" --memory 4096 --cpus 2 --firmware efi \
-  --nic1 bridged --bridgeadapter1 "${VM_BRIDGE}"
+  --nic1 bridged --bridgeadapter1 "${VM_BRIDGE}" --macaddress1 "${MAC}"
 VBoxManage storagectl "${VM_NAME}" --name "IDE" --add ide
 VBoxManage convertfromraw "${IMAGE}" "${VM_NAME}-boot.vdi" --format VDI 2>/dev/null || true
 VBoxManage storageattach "${VM_NAME}" --storagectl "IDE" --port 0 --device 0 \

@@ -1,0 +1,21 @@
+# vim: ft=systemd
+[Unit]
+Description=Town OS Network Diagnostics
+After=town-os-systemcontroller.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '\
+  LOG=/town-os/network-diag.log; \
+  echo "=== $(date -Iseconds) ===" >> $LOG; \
+  echo "--- ip addr ---" >> $LOG; \
+  ip addr >> $LOG 2>&1; \
+  echo "--- ip route ---" >> $LOG; \
+  ip route >> $LOG 2>&1; \
+  echo "--- nft list ruleset ---" >> $LOG; \
+  nft list ruleset >> $LOG 2>&1; \
+  echo "--- iptables-save ---" >> $LOG; \
+  iptables-save >> $LOG 2>&1; \
+  echo "--- lsmod nf ---" >> $LOG; \
+  lsmod | grep nf >> $LOG 2>&1; \
+  echo "" >> $LOG'

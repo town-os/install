@@ -23,17 +23,17 @@ echo town-os >/etc/hostname
 # Remove autodetect — it strips modules to only those found on the build host
 # (a loopback in a chroot), so USB/AHCI/SCSI drivers would be missing at boot
 sed -i 's/^HOOKS=.*/HOOKS=(base udev modconf kms keyboard keymap consolefont block filesystems fsck town-squashfs)/' /etc/mkinitcpio.conf
-sed -i 's/^MODULES=.*/MODULES=(loop overlay squashfs)/' /etc/mkinitcpio.conf
+sed -i 's/^MODULES=.*/MODULES=(loop overlay squashfs nf_tables)/' /etc/mkinitcpio.conf
 
 mkinitcpio -P
 
 curl -sSL sh.rustup.rs >boot-rustup && chmod +x boot-rustup && ./boot-rustup -y && rm boot-rustup
 source $HOME/.cargo/env && cargo install --git https://gitea.com/town-os/control-plane charon && mv /root/.cargo/bin/charon /usr/bin && rm -rf $HOME/.cargo/registry
 
-systemctl enable town-os-make-storage.service town-os-systemcontroller.service town-os-ui.service avahi-daemon.service systemd-networkd systemd-networkd-wait-online systemd-resolved sshd.service
+systemctl enable town-os-make-storage.service town-os-systemcontroller.service town-os-ui.service town-os-network-diag.timer avahi-daemon.service systemd-networkd systemd-networkd-wait-online systemd-resolved sshd.service
 
 sed -i 's/^#PermitRootLogin .*/PermitRootLogin yes/' /etc/ssh/sshd_config
-systemctl disable avahi-daemon.socket
+mkdir -p /var/log/journal
 
 if [ "$BACKEND" = "zfs" ]
 then
@@ -48,8 +48,13 @@ Name=en*
 
 [Network]
 DHCP=yes
-[Link]
-RequiredForOnline=routable
+IPv6AcceptRA=yes
+
+[DHCPv4]
+RouteMetric=100
+
+[DHCPv6]
+RouteMetric=100
 EOF
 
 # Configure podman storage — use native btrfs/zfs driver so we avoid
@@ -61,7 +66,8 @@ driver = "$BACKEND"
 graphroot = "/town-os/containers"
 STORAGE
 
+
 echo Welcome to Town OS >> /etc/issue
-echo GRUB_CMDLINE_LINUX_DEFAULT=rootwait >> /etc/default/grub
+echo 'GRUB_CMDLINE_LINUX_DEFAULT="rootwait console=ttyS0,115200 console=tty0"' >> /etc/default/grub
 echo "GRUB_DISTRIBUTOR=\"Town OS\"" >> /etc/default/grub
 echo GRUB_TERMINAL_OUTPUT=console >> /etc/default/grub

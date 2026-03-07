@@ -183,7 +183,7 @@ insmod search_fs_uuid
 search --no-floppy --fs-uuid --set=root $DATA_UUID
 
 menuentry "Town OS" {
-    linux /boot/$KERNEL root=UUID=$DATA_UUID rootwait rw
+    linux /boot/$KERNEL root=UUID=$DATA_UUID rootwait rw console=ttyS0,115200 console=tty0
     initrd /boot/$INITRD
 }
 EOF

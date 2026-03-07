@@ -23,7 +23,10 @@ ExecStart=/usr/bin/podman run --pull=always \
     -v /dev:/dev \
     -v /town-os:/town-os:shared \
     -v /var/log:/var/log \
-    quay.io/town/town:rc.latest
+    quay.io/town/town:rc.latest \
+    -repo-dir /town-os/data/repos \
+    -db /town-os/data/db/system.db \
+    -btrfs /town-os
 Restart=always
 
 [Install]

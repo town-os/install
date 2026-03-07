@@ -17,15 +17,23 @@ for i in 0 1 2 3; do
 done
 
 DAEMON_ARGS=()
+SERIAL_ARGS=()
 if [ "${FOREGROUND}" != "1" ]; then
   DAEMON_ARGS=(-daemonize -pidfile qemu.pid)
+  SERIAL_ARGS=(-serial "unix:/tmp/town-os-serial.sock,server=on,wait=off")
+else
+  SERIAL_ARGS=(-serial mon:stdio)
 fi
+
+# Generate a stable random MAC in the QEMU OUI range (52:54:00:xx:xx:xx)
+# seeded from the VM name so the same VM always gets the same MAC/IP
+MAC=$(echo "${VM_NAME:-town-os}" | md5sum | sed 's/^\(..\)\(..\)\(..\).*/52:54:00:\1:\2:\3/')
 
 sudo -E qemu-system-x86_64 \
   -enable-kvm \
   -m "${VM_MEMORY}" \
   -netdev bridge,id=net0,br="${VM_BRIDGE}" \
-  -device virtio-net-pci,netdev=net0 \
+  -device virtio-net-pci,netdev=net0,mac="${MAC}" \
   -device qemu-xhci \
   -drive if=none,id=usbdisk,file="${IMAGE}",format=raw \
   -device usb-storage,drive=usbdisk,bootindex=0 \
@@ -38,11 +46,13 @@ sudo -E qemu-system-x86_64 \
   -device ide-hd,drive=d2,bus=ahci0.2 \
   -drive file=disk3.img,if=none,id=d3,format=raw \
   -device ide-hd,drive=d3,bus=ahci0.3 \
+  "${SERIAL_ARGS[@]}" \
   "${DAEMON_ARGS[@]}"
 
 if [ "${FOREGROUND}" != "1" ]; then
   PID=$(sudo cat qemu.pid)
   echo "QEMU running in background (PID ${PID})"
+  echo "Serial console: socat - UNIX-CONNECT:/tmp/town-os-serial.sock"
 
   echo "Waiting for VM network (up to 120s)..."
   TIMEOUT=120

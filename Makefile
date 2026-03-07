@@ -12,9 +12,9 @@ FOREGROUND  ?=
 
 .PHONY: run run-release stop image image-release qemu qemu-fg \
         qemu-release virtualbox virtualbox-fg virtualbox-release \
-        stop-qemu stop-virtualbox vm-ip clean cleanup-loopback deps
+        stop-qemu stop-virtualbox vm-ip serial clean cleanup-loopback deps
 
-run: deps $(IMAGE)
+run: stop deps $(IMAGE)
 	VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_BRIDGE=$(VM_BRIDGE) \
 	  VM_NAME=$(VM_NAME) IMAGE=$(IMAGE) FOREGROUND=$(FOREGROUND) \
 	  ${PWD}/make/run.sh $(IMAGE)
@@ -62,6 +62,9 @@ stop-virtualbox:
 
 vm-ip:
 	VM_NAME=$(VM_NAME) IMAGE=$(IMAGE) ${PWD}/make/vm-ip.sh
+
+serial:
+	${PWD}/make/serial.sh
 
 clean: stop
 	IMAGE=$(IMAGE) VM_NAME=$(VM_NAME) ${PWD}/make/clean.sh
