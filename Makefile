@@ -19,9 +19,7 @@ run: deps $(IMAGE)
 	  VM_NAME=$(VM_NAME) IMAGE=$(IMAGE) FOREGROUND=$(FOREGROUND) \
 	  ${PWD}/make/run.sh $(IMAGE)
 
-# this image should be rebuildable every time
-image: $(IMAGE)
-$(IMAGE):
+image:
 	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) UI_IMAGE=$(UI_IMAGE) ${PWD}/make/image.sh $(IMAGE_SIZE) $(IMAGE)
 
 image-release:
