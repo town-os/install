@@ -5,80 +5,19 @@ Builds a bootable Town OS image and launches it in a VM.
 For more information, visit the [Town OS website](https://town-os.github.io) or
 the [source repository](https://gitea.com/town-os/town-os).
 
-## Dependencies
-
-The build host must be Arch-based (Arch Linux or Manjaro).
-
-### Required (image build)
-
-| Package                | Provides                                      | Install                              |
-|------------------------|-----------------------------------------------|--------------------------------------|
-| `base-devel`           | `make`, core build tools                      | `pacman -S base-devel`               |
-| `arch-install-scripts` | `pacstrap`, `genfstab`, `arch-chroot`         | `pacman -S arch-install-scripts`     |
-| `parted`               | `parted`, `partprobe`                         | `pacman -S parted`                   |
-| `util-linux`           | `losetup`, `mountpoint`, `truncate`, `mount`  | included in base                     |
-| `e2fsprogs`            | `mkfs.ext4`                                   | `pacman -S e2fsprogs`                |
-| `dosfstools`           | `mkfs.fat`                                    | `pacman -S dosfstools`               |
-| `rsync`                | `rsync`                                       | `pacman -S rsync`                    |
-| `psmisc`               | `fuser`                                       | `pacman -S psmisc`                   |
-| `lsof`                 | `lsof`                                        | `pacman -S lsof`                     |
-
-### Optional (VM targets)
-
-| Package                         | Provides             | Install                               |
-|---------------------------------|----------------------|---------------------------------------|
-| `qemu-full` or `qemu-system-x86` | `qemu-system-x86_64` | `pacman -S qemu-full`                |
-| `virtualbox`                    | `VBoxManage`         | `pacman -S virtualbox`                |
-
-### Install all required dependencies
-
-```
-make deps
-```
-
-For QEMU support add `qemu-full`. For VirtualBox support add `virtualbox`.
-
 ## Quick start
 
+Requires an Arch-based host (Arch Linux or Manjaro).
+
 ```
-make deps           # install build dependencies
-make image          # build a dev image (rc.latest controller)
-make image-release  # build a release image (latest controller)
-make qemu           # build + launch QEMU in background, print VM IP when ready
-make qemu-fg        # build + launch QEMU in foreground
-make stop-qemu      # stop the background QEMU instance
+git clone https://gitea.com/town-os/town-os-install.git
+cd town-os-install
+make
 ```
 
-### Targets
-
-| Target              | Description                                                    |
-|---------------------|----------------------------------------------------------------|
-| `image`             | Build the raw disk image (default target)                      |
-| `image-release`     | Build a release image (`quay.io/town/town:latest`)             |
-| `qemu`              | Build image, launch QEMU in background, wait for VM IP         |
-| `qemu-fg`           | Build image, launch QEMU in foreground                         |
-| `stop-qemu`         | Stop a background QEMU instance                                |
-| `virtualbox`        | Build image, create VBox VM, launch headless in background     |
-| `virtualbox-fg`     | Build image, create VBox VM, launch with GUI                   |
-| `stop-virtualbox`   | Power off the VirtualBox VM                                    |
-| `vm-ip`             | Resolve and print the VM's IP address                          |
-| `clean`             | Remove all image and VM disk files                             |
-| `deps`              | Install required build dependencies via pacman                  |
-| `cleanup-loopback`  | Kill processes on loopback mounts and detach all loops          |
-
-### Tunable variables
-
-Override on the command line, e.g. `make qemu VM_MEMORY=8G`.
-
-| Variable           | Default                          | Description                              |
-|--------------------|----------------------------------|------------------------------------------|
-| `IMAGE`            | `image.raw`                      | Output image filename                    |
-| `IMAGE_SIZE`       | `12G`                            | Size of the raw disk image               |
-| `CONTROLLER_IMAGE` | `quay.io/town/town:rc.latest`    | System controller container image        |
-| `VM_DISK_SIZE`     | `50G` (from `town-os.yaml`)      | Size of each sparse data disk            |
-| `VM_MEMORY`        | `4G`                             | RAM allocated to the QEMU VM             |
-| `VM_BRIDGE`        | `virbr0`                         | Bridge interface for VM networking       |
-| `VM_NAME`          | `town-os`                        | VirtualBox VM name                       |
+This installs all dependencies, builds a disk image, auto-detects the available
+hypervisor (prefers QEMU, falls back to VirtualBox), and launches the VM in the
+background. When the VM is ready its IP address is printed.
 
 ## Multicast DNS (town-os.local)
 
@@ -103,6 +42,43 @@ Once the VM is running, use `make vm-ip` to resolve its IP address.
 - **User:** `root`
 - **Password:** `enjoytownos`
 
+## Targets
+
+| Target              | Description                                                    |
+|---------------------|----------------------------------------------------------------|
+| `run`               | Auto-detect hypervisor, build image, launch VM (default target)|
+| `stop`              | Stop any tracked VMs (QEMU and/or VirtualBox)                  |
+| `image`             | Build the raw disk image                                       |
+| `run-release`       | Same as `run` but with release (`:latest`) images              |
+| `image-release`     | Build a release image (`:latest` tags)                         |
+| `qemu`              | Install deps, build image, launch QEMU in background (explicit)|
+| `qemu-fg`           | Install deps, build image, launch QEMU in foreground (explicit)|
+| `qemu-release`      | Same as `qemu` but with release (`:latest`) images             |
+| `stop-qemu`         | Stop a background QEMU instance                                |
+| `virtualbox`        | Build image, create VBox VM, launch headless in background     |
+| `virtualbox-fg`     | Build image, create VBox VM, launch with GUI                   |
+| `virtualbox-release`| Same as `virtualbox` but with release (`:latest`) images       |
+| `stop-virtualbox`   | Power off the VirtualBox VM                                    |
+| `vm-ip`             | Resolve and print the VM's IP address                          |
+| `clean`             | Remove all image and VM disk files                             |
+| `deps`              | Install required build dependencies via pacman                  |
+| `cleanup-loopback`  | Kill processes on loopback mounts and detach all loops          |
+
+## Tunable variables
+
+Override on the command line, e.g. `make qemu VM_MEMORY=8G`.
+
+| Variable           | Default                          | Description                              |
+|--------------------|----------------------------------|------------------------------------------|
+| `IMAGE`            | `image.raw`                      | Output image filename                    |
+| `IMAGE_SIZE`       | `12G`                            | Size of the raw disk image               |
+| `CONTROLLER_IMAGE` | `quay.io/town/town:rc.latest`    | System controller container image        |
+| `UI_IMAGE`         | `quay.io/town/ui:rc.latest`      | UI container image                       |
+| `VM_DISK_SIZE`     | `50G` (from `town-os.yaml`)      | Size of each sparse data disk            |
+| `VM_MEMORY`        | `4G`                             | RAM allocated to the QEMU VM             |
+| `VM_BRIDGE`        | `virbr0`                         | Bridge interface for VM networking       |
+| `VM_NAME`          | `town-os`                        | VirtualBox VM name                       |
+
 ## Configuration
 
 Edit `town-os.yaml` before building to configure how the image behaves. The
@@ -114,6 +90,32 @@ the storage provisioning scripts at boot time.
 | `storage_backend`  | `btrfs`, `zfs`        | `btrfs`  | Filesystem used for the storage pool           |
 | `btrfs_raid_mode`  | `native`, `mdadm`     | `native` | Multi-disk redundancy strategy (btrfs only)    |
 | `vm_disk_size`     | any `truncate -s` val | `50G`    | Size of each VM data disk (sparse)             |
+
+## Dependencies
+
+`make` handles dependency installation automatically. For manual control use
+`make deps`, or install packages individually.
+
+### Required (image build)
+
+| Package                | Provides                                      | Install                              |
+|------------------------|-----------------------------------------------|--------------------------------------|
+| `base-devel`           | `make`, core build tools                      | `pacman -S base-devel`               |
+| `arch-install-scripts` | `pacstrap`, `genfstab`, `arch-chroot`         | `pacman -S arch-install-scripts`     |
+| `parted`               | `parted`, `partprobe`                         | `pacman -S parted`                   |
+| `util-linux`           | `losetup`, `mountpoint`, `truncate`, `mount`  | included in base                     |
+| `e2fsprogs`            | `mkfs.ext4`                                   | `pacman -S e2fsprogs`                |
+| `dosfstools`           | `mkfs.fat`                                    | `pacman -S dosfstools`               |
+| `rsync`                | `rsync`                                       | `pacman -S rsync`                    |
+| `psmisc`               | `fuser`                                       | `pacman -S psmisc`                   |
+| `lsof`                 | `lsof`                                        | `pacman -S lsof`                     |
+
+### VM targets
+
+| Package                         | Provides             | Install                               |
+|---------------------------------|----------------------|---------------------------------------|
+| `qemu-full` or `qemu-system-x86` | `qemu-system-x86_64` | `pacman -S qemu-full`                |
+| `virtualbox`                    | `VBoxManage`         | `pacman -S virtualbox`                |
 
 ## Installation process
 
@@ -137,7 +139,8 @@ The install script performs the following steps:
    - Sets the root password, locale, timezone, and hostname (`town-os`).
    - Installs the Charon control-plane binary from source via Cargo.
    - Enables systemd services: storage provisioning, the system controller
-     (container image set by `CONTROLLER_IMAGE`), avahi, networkd, and resolved.
+     (container image set by `CONTROLLER_IMAGE`), the UI (container image set
+     by `UI_IMAGE`), avahi, networkd, and resolved.
    - Writes a DHCP network configuration for ethernet interfaces.
    - Sets the GRUB distributor to Town OS.
 
@@ -149,5 +152,6 @@ The install script performs the following steps:
 | Variable           | Effect                                                        |
 |--------------------|---------------------------------------------------------------|
 | `CONTROLLER_IMAGE` | Container image for the system controller service             |
+| `UI_IMAGE`         | Container image for the UI service                            |
 | `DEBUG`            | When non-empty, storage scripts run in debug/dry-run mode     |
 | `KEEP_MOUNT`       | When non-empty, skip unmount and USB write; print mount path  |

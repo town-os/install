@@ -30,7 +30,7 @@ mkinitcpio -P
 curl -sSL sh.rustup.rs >boot-rustup && chmod +x boot-rustup && ./boot-rustup -y && rm boot-rustup
 source $HOME/.cargo/env && cargo install --git https://gitea.com/town-os/control-plane charon && mv /root/.cargo/bin/charon /usr/bin && rm -rf $HOME/.cargo/registry
 
-systemctl enable make-storage.service systemcontroller.service avahi-daemon.service systemd-networkd systemd-networkd-wait-online systemd-resolved
+systemctl enable town-os-make-storage.service town-os-systemcontroller.service town-os-ui.service avahi-daemon.service systemd-networkd systemd-networkd-wait-online systemd-resolved
 systemctl disable avahi-daemon.socket
 
 if [ "$BACKEND" = "zfs" ]

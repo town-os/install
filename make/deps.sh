@@ -2,7 +2,7 @@
 set -euo pipefail
 
 sudo -E pacman -S --needed base-devel arch-install-scripts parted e2fsprogs \
-  dosfstools rsync psmisc lsof squashfs-tools libvirt dnsmasq avahi
+  dosfstools rsync psmisc lsof squashfs-tools libvirt dnsmasq avahi qemu-full
 
 sudo systemctl enable --now libvirtd
 sudo virsh net-define /usr/share/libvirt/networks/default.xml 2>/dev/null || true
