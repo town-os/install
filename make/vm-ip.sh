@@ -18,8 +18,10 @@ if sudo virsh list --name 2>/dev/null | grep -q .; then
 fi
 
 if pgrep -f "qemu-system.*${IMAGE}" >/dev/null 2>&1 && [ "${found}" -eq 0 ]; then
+  # Derive the same stable MAC that qemu.sh generates from VM_NAME
+  MAC=$(echo "${VM_NAME}" | md5sum | sed 's/^\(..\)\(..\)\(..\).*/52:54:00:\1:\2:\3/')
   ip=$(sudo virsh net-dhcp-leases default 2>/dev/null \
-    | awk 'NR>2 && $6 != "" { split($5,a,"/"); print a[1] }' | head -1)
+    | awk -v mac="${MAC}" '$3 == mac { split($5,a,"/"); print a[1] }' | tail -1)
   if [ -n "${ip}" ]; then
     echo "QEMU: ${ip}"
     found=1
