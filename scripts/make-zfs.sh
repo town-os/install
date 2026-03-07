@@ -23,6 +23,9 @@ then
     zpool create $POOL raidz ${disk_list[@]}
   fi
 
+  # Create containers dataset for podman storage
+  zfs create -o mountpoint=/town-os/containers $POOL/containers
+
   for sub in var etc
   do
     mkdir -p /overlays/$sub

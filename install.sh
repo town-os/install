@@ -43,7 +43,7 @@ cleanup_mount() {
   fi
 }
 
-IMAGE_SIZE=${1:-10G}
+IMAGE_SIZE=${1:-12G}
 IMAGE=${2:-image.raw}
 
 # Colors for output
@@ -54,7 +54,7 @@ NC='\033[0m'
 
 if [[ $EUID -ne 0 ]]
 then
-   echo -e "${RED}This script must be run as root${NC}" 
+   echo -e "${RED}This script must be run as root${NC}"
    exit 1
 fi
 
@@ -85,14 +85,19 @@ DEVICE=$(losetup -j $IMAGE | awk -F: '{ print $1 }' | head -1)
 print_info "Creating GPT partition table..."
 parted -s "$DEVICE" mklabel gpt
 
-print_info "Creating EFI System Partition (ESP)..."
-parted -s "$DEVICE" mkpart ESP ext4 1MiB 513MiB
+# Part1: BIOS boot partition (raw, for GRUB core image embed only — no filesystem)
+print_info "Creating BIOS boot partition..."
+parted -s "$DEVICE" mkpart grub 1MiB 2MiB
 parted -s "$DEVICE" set 1 bios_grub on
-parted -s "$DEVICE" mkpart ESP fat32 513MiB 1GiB
+
+# Part2: EFI System Partition
+print_info "Creating EFI System Partition..."
+parted -s "$DEVICE" mkpart ESP fat32 2MiB 514MiB
 parted -s "$DEVICE" set 2 esp on
 
-print_info "Creating data partition..."
-parted -s "$DEVICE" mkpart primary ext4 1GiB 100%
+# Part3: Data partition (holds /boot + root.sfs, >= 10GB)
+print_info "Creating data partition (>= 10GB)..."
+parted -s "$DEVICE" mkpart primary ext4 514MiB 100%
 
 # Wait for kernel to update partition table
 sleep 2
@@ -103,8 +108,7 @@ PART1="${DEVICE}p1"
 PART2="${DEVICE}p2"
 PART3="${DEVICE}p3"
 
-print_info "Formatting Boot partition as ext4..."
-mkfs.ext4 -L TOWN_BOOT "$PART1"
+# Part1 is raw (bios_grub) — no formatting
 
 print_info "Formatting EFI partition as FAT32..."
 mkfs.fat -F32 -n TOWN_EFI "$PART2"
@@ -115,8 +119,6 @@ mkfs.ext4 -L TOWN_DATA "$PART3"
 print_info "Mounting partitions..."
 mkdir -p "$MOUNT_POINT"
 mount "$PART3" "$MOUNT_POINT"
-mkdir -p "$MOUNT_POINT/boot"
-mount "$PART1" "$MOUNT_POINT/boot"
 mkdir -p "$MOUNT_POINT/boot/efi"
 mount "$PART2" "$MOUNT_POINT/boot/efi"
 
@@ -133,13 +135,25 @@ else
   fi
 fi
 
-pacstrap -K $MOUNT_POINT $PACKAGES
+pacstrap -Kc $MOUNT_POINT $PACKAGES
 
 print_info "System setup..."
 
-genfstab -U $MOUNT_POINT $MOUNT_POINT/etc/fstab
+genfstab -U $MOUNT_POINT >> $MOUNT_POINT/etc/fstab
+
+# Remove the root (/) entry from fstab — root is mounted by the initramfs
+# squashfs hook as an overlay, and systemd-remount-fs would fail trying to
+# remount the overlay as ext4
+sed -i '\|[[:space:]]/[[:space:]]|d' $MOUNT_POINT/etc/fstab
+
+# Install squashfs boot hooks into the chroot
+cp ./initcpio/install/town-squashfs $MOUNT_POINT/usr/lib/initcpio/install/town-squashfs
+cp ./initcpio/hooks/town-squashfs $MOUNT_POINT/usr/lib/initcpio/hooks/town-squashfs
+
+CONTROLLER_IMAGE="${CONTROLLER_IMAGE:-quay.io/town/town:rc.latest}"
 
 rsync -a ./systemd/ $MOUNT_POINT/etc/systemd/system/
+sed -i "s|quay.io/town/town:rc.latest|${CONTROLLER_IMAGE}|g" $MOUNT_POINT/etc/systemd/system/systemcontroller.service
 chroot_cmd mkdir -p /usr/lib/town-os
 cp ./town-os.yaml $MOUNT_POINT/usr/lib/town-os/town-os.yaml
 rsync -a ./scripts/ $MOUNT_POINT/usr/lib/town-os/scripts/
@@ -148,7 +162,29 @@ chroot_cmd bash /usr/lib/town-os/scripts/configure.sh
 print_info "Installing GRUB bootloader..."
 
 mkdir -p "$MOUNT_POINT/boot/grub"
-chroot_cmd grub-mkconfig -o /boot/grub/grub.cfg
+DATA_UUID=$(blkid -s UUID -o value "$PART3")
+
+# Detect kernel and initramfs filenames
+KERNEL=$(basename $(ls "$MOUNT_POINT"/boot/vmlinuz-* | head -1))
+INITRD=$(basename $(ls "$MOUNT_POINT"/boot/initramfs-*.img | grep -v fallback | head -1))
+
+# Write grub.cfg directly — grub-mkconfig can't resolve UUIDs correctly
+# inside a loopback chroot, so we generate a known-correct config
+cat > "$MOUNT_POINT/boot/grub/grub.cfg" <<EOF
+set timeout=5
+set default=0
+
+insmod part_gpt
+insmod ext2
+insmod search_fs_uuid
+
+search --no-floppy --fs-uuid --set=root $DATA_UUID
+
+menuentry "Town OS" {
+    linux /boot/$KERNEL root=UUID=$DATA_UUID rootwait rw
+    initrd /boot/$INITRD
+}
+EOF
 
 chroot_cmd grub-install --target=x86_64-efi \
     --efi-directory="/boot/efi" \
@@ -161,13 +197,60 @@ chroot_cmd grub-install --target=i386-pc \
     --recheck \
     "$DEVICE"
 
-if [ "x$KEEP_MOUNT" = "x" ]
-then
-  cleanup_mount
-  eject_loopback
-  print_info "Image built successfully: $IMAGE"
-else
-  print_info "Mount preserved at $MOUNT_POINT"
-fi
+# --- Build squashfs image ---
+print_info "Building squashfs root image..."
+
+# Unmount EFI before creating squashfs
+umount "$MOUNT_POINT/boot/efi"
+
+# Create squashfs from the rootfs, excluding /boot (it stays on Part3 for GRUB)
+mksquashfs "$MOUNT_POINT" /tmp/town-root.sfs -comp zstd -noappend -e boot
+
+# Remove everything from Part3 except /boot
+find "$MOUNT_POINT" -mindepth 1 -maxdepth 1 ! -name boot -exec rm -rf {} +
+
+# Place squashfs on the data partition alongside /boot
+mv /tmp/town-root.sfs "$MOUNT_POINT/root.sfs"
+sync
+
+# --- Resize filesystem and shrink image ---
+print_info "Shrinking data partition to fit contents..."
+
+umount "$MOUNT_POINT"
+rmdir "$MOUNT_POINT" 2>/dev/null || true
+
+# Check and shrink the ext4 filesystem to minimum size
+# e2fsck returns 1 when it corrects errors (e.g. creating lost+found); that's OK
+e2fsck -fy "$PART3" || [ $? -le 1 ]
+resize2fs -M "$PART3"
+
+# Calculate the new filesystem size in bytes
+BLOCK_COUNT=$(dumpe2fs -h "$PART3" 2>/dev/null | awk '/^Block count:/{print $3}')
+BLOCK_SIZE=$(dumpe2fs -h "$PART3" 2>/dev/null | awk '/^Block size:/{print $3}')
+FS_BYTES=$((BLOCK_COUNT * BLOCK_SIZE))
+
+# Get partition 3 start offset in bytes
+PART3_START_BYTES=$(parted -s "$DEVICE" unit B print | awk '/^ 3/{print $2}' | tr -d 'B')
+PART3_END_BYTES=$((PART3_START_BYTES + FS_BYTES))
+
+# Resize partition 3 to match the shrunk filesystem
+(yes || true) | parted ---pretend-input-tty "$DEVICE" resizepart 3 ${PART3_END_BYTES}B
+
+# Dump the partition table NOW while GPT is still intact on the loopback
+# (after truncation the backup GPT header is gone and sfdisk can't read it)
+sfdisk -d "$DEVICE" | grep -v '^last-lba:' > /tmp/town-ptable.dump
+
+# Detach loopback
+eject_loopback
+
+# Truncate image to end of partition 3 plus 1MB for backup GPT
+IMAGE_BYTES=$((PART3_END_BYTES + 1048576))
+truncate -s "$IMAGE_BYTES" "$IMAGE"
+
+# Rewrite partition table — sfdisk places the backup GPT at the new disk end
+sfdisk --force "$IMAGE" < /tmp/town-ptable.dump
+rm -f /tmp/town-ptable.dump
+
+print_info "Image built successfully: $IMAGE ($(du -h "$IMAGE" | awk '{print $1}'))"
 
 exit 0

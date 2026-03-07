@@ -15,7 +15,7 @@ town_config() {
 RAID_MODE=$(town_config btrfs_raid_mode)
 RAID_MODE="${RAID_MODE:-native}"
 
-MOUNT_POINT="/town-os-pool"
+MOUNT_POINT="/town-os"
 
 # Check if the btrfs filesystem already exists; if so, mount and skip creation.
 if blkid -L "$LABEL" >/dev/null 2>&1
@@ -55,6 +55,9 @@ else
   btrfs subvolume create "$MOUNT_POINT/@var"
   btrfs subvolume create "$MOUNT_POINT/@etc"
 fi
+
+# Ensure containers directory exists for podman storage
+mkdir -p "$MOUNT_POINT/containers"
 
 # Mount subvolumes for overlays
 for sub in var etc

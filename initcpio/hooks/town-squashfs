@@ -1,0 +1,61 @@
+#!/usr/bin/ash
+
+run_hook() {
+    mount_handler="town_squashfs_mount"
+}
+
+town_squashfs_mount() {
+    local newroot="$1"
+
+    msg ":: Mounting Town OS squashfs root..."
+
+    # Mount the data partition (kernel root= parameter, resolved by mkinitcpio)
+    mkdir -p /run/town-data
+    if ! mount -t ext4 -o ro "$root" /run/town-data; then
+        err "Failed to mount data partition ($root)"
+        launch_interactive_shell
+        return
+    fi
+
+    if [ ! -f /run/town-data/root.sfs ]; then
+        err "root.sfs not found on data partition"
+        launch_interactive_shell
+        return
+    fi
+
+    # Loop-mount squashfs
+    mkdir -p /run/town-sfs
+    local loop_dev
+    loop_dev=$(losetup --find --show --read-only /run/town-data/root.sfs)
+    if ! mount -t squashfs -o ro "$loop_dev" /run/town-sfs; then
+        err "Failed to mount squashfs from $loop_dev"
+        launch_interactive_shell
+        return
+    fi
+
+    # Tmpfs overlay for writability until persistent storage is provisioned
+    mkdir -p /run/town-overlay
+    mount -t tmpfs tmpfs /run/town-overlay
+    mkdir -p /run/town-overlay/upper /run/town-overlay/work
+
+    # Mount overlay as new root
+    mount -t overlay overlay \
+        -o "lowerdir=/run/town-sfs,upperdir=/run/town-overlay/upper,workdir=/run/town-overlay/work" \
+        "$newroot"
+
+    # Move mounts to /.town inside the new root — NOT under /run,
+    # because systemd remounts /run as tmpfs after switch_root,
+    # which would hide everything we put there.
+    mkdir -p "$newroot/.town/sfs" "$newroot/.town/data" "$newroot/.town/overlay"
+    mount --move /run/town-sfs "$newroot/.town/sfs"
+    mount --move /run/town-data "$newroot/.town/data"
+    mount --move /run/town-overlay "$newroot/.town/overlay"
+
+    # Expose squashfs root at /usb for overlay lower directories
+    mkdir -p "$newroot/usb"
+    mount --bind "$newroot/.town/sfs" "$newroot/usb"
+
+    # Bind-mount /boot from the data partition so GRUB and kernel updates persist
+    mkdir -p "$newroot/boot"
+    mount --bind "$newroot/.town/data/boot" "$newroot/boot"
+}

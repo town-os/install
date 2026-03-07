@@ -1,0 +1,16 @@
+#!/bin/bash
+
+build() {
+    add_module squashfs
+    add_module overlay
+    add_module loop
+    add_binary losetup
+    add_runscript
+}
+
+help() {
+    cat <<HELPEOF
+This hook mounts a squashfs image from the data partition as the
+root filesystem with a tmpfs overlay for writability.
+HELPEOF
+}

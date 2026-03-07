@@ -22,9 +22,8 @@ ExecStart=/usr/bin/podman run --pull=always \
     -v /run/dbus:/run/dbus \
     -v /dev:/dev \
     -v /town-os:/town-os:shared \
-    -v /town-os-pool:/town-os-pool:shared \
     -v /var/log:/var/log \
-    quay.io/town/town:latest
+    quay.io/town/town:rc.latest
 Restart=always
 
 [Install]

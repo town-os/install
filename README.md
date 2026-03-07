@@ -38,36 +38,65 @@ make deps
 
 For QEMU support add `qemu-full`. For VirtualBox support add `virtualbox`.
 
-## Usage
+## Quick start
 
 ```
-make                # build the image (calls sudo internally)
-make qemu           # build + launch in QEMU
-make virtualbox     # build + create/launch VirtualBox VM
-make cleanup-loopback  # emergency loopback cleanup
+make deps           # install build dependencies
+make image          # build a dev image (rc.latest controller)
+make image-release  # build a release image (latest controller)
+make qemu           # build + launch QEMU in background, print VM IP when ready
+make qemu-fg        # build + launch QEMU in foreground
+make stop-qemu      # stop the background QEMU instance
 ```
 
 ### Targets
 
-| Target              | Description                                              |
-|---------------------|----------------------------------------------------------|
-| `image`             | Build the raw disk image (default target)                |
-| `qemu`              | Build image, create sparse data disks, launch QEMU       |
-| `virtualbox`        | Build image, create VBox VM with VDI disks, launch it    |
-| `deps`              | Install required build dependencies via pacman            |
-| `cleanup-loopback`  | Kill processes on loopback mounts and detach all loops    |
+| Target              | Description                                                    |
+|---------------------|----------------------------------------------------------------|
+| `image`             | Build the raw disk image (default target)                      |
+| `image-release`     | Build a release image (`quay.io/town/town:latest`)             |
+| `qemu`              | Build image, launch QEMU in background, wait for VM IP         |
+| `qemu-fg`           | Build image, launch QEMU in foreground                         |
+| `stop-qemu`         | Stop a background QEMU instance                                |
+| `virtualbox`        | Build image, create VBox VM, launch headless in background     |
+| `virtualbox-fg`     | Build image, create VBox VM, launch with GUI                   |
+| `stop-virtualbox`   | Power off the VirtualBox VM                                    |
+| `vm-ip`             | Resolve and print the VM's IP address                          |
+| `clean`             | Remove all image and VM disk files                             |
+| `deps`              | Install required build dependencies via pacman                  |
+| `cleanup-loopback`  | Kill processes on loopback mounts and detach all loops          |
 
 ### Tunable variables
 
 Override on the command line, e.g. `make qemu VM_MEMORY=8G`.
 
-| Variable       | Default                          | Description                              |
-|----------------|----------------------------------|------------------------------------------|
-| `IMAGE`        | `image.raw`                      | Output image filename                    |
-| `IMAGE_SIZE`   | `10G`                            | Size of the raw disk image               |
-| `VM_DISK_SIZE` | `50G` (from `town-os.yaml`)      | Size of each sparse data disk            |
-| `VM_MEMORY`    | `4G`                             | RAM allocated to the QEMU VM             |
-| `VM_NAME`      | `town-os`                        | VirtualBox VM name                       |
+| Variable           | Default                          | Description                              |
+|--------------------|----------------------------------|------------------------------------------|
+| `IMAGE`            | `image.raw`                      | Output image filename                    |
+| `IMAGE_SIZE`       | `12G`                            | Size of the raw disk image               |
+| `CONTROLLER_IMAGE` | `quay.io/town/town:rc.latest`    | System controller container image        |
+| `VM_DISK_SIZE`     | `50G` (from `town-os.yaml`)      | Size of each sparse data disk            |
+| `VM_MEMORY`        | `4G`                             | RAM allocated to the QEMU VM             |
+| `VM_BRIDGE`        | `virbr0`                         | Bridge interface for VM networking       |
+| `VM_NAME`          | `town-os`                        | VirtualBox VM name                       |
+
+## Multicast DNS (town-os.local)
+
+The VM advertises itself as `town-os.local` via avahi/mDNS. For this to work
+from the host when using the default `virbr0` bridge (libvirt NAT), the host's
+avahi daemon must have mDNS reflection enabled. `make deps` configures this
+automatically by setting `enable-reflector=yes` in `/etc/avahi/avahi-daemon.conf`
+and restarting the service.
+
+If you've already run `make deps` and `town-os.local` still doesn't resolve,
+verify manually:
+
+```
+grep enable-reflector /etc/avahi/avahi-daemon.conf
+# should show: enable-reflector=yes
+```
+
+Once the VM is running, use `make vm-ip` to resolve its IP address.
 
 ## Default credentials
 
@@ -108,7 +137,7 @@ The install script performs the following steps:
    - Sets the root password, locale, timezone, and hostname (`town-os`).
    - Installs the Charon control-plane binary from source via Cargo.
    - Enables systemd services: storage provisioning, the system controller
-     (`quay.io/town/town:latest`), avahi, networkd, and resolved.
+     (container image set by `CONTROLLER_IMAGE`), avahi, networkd, and resolved.
    - Writes a DHCP network configuration for ethernet interfaces.
    - Sets the GRUB distributor to Town OS.
 
@@ -117,7 +146,8 @@ The install script performs the following steps:
 
 ### Environment variables
 
-| Variable     | Effect                                                        |
-|--------------|---------------------------------------------------------------|
-| `DEBUG`      | When non-empty, storage scripts run in debug/dry-run mode     |
-| `KEEP_MOUNT` | When non-empty, skip unmount and USB write; print mount path |
+| Variable           | Effect                                                        |
+|--------------------|---------------------------------------------------------------|
+| `CONTROLLER_IMAGE` | Container image for the system controller service             |
+| `DEBUG`            | When non-empty, storage scripts run in debug/dry-run mode     |
+| `KEEP_MOUNT`       | When non-empty, skip unmount and USB write; print mount path  |

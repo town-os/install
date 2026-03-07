@@ -8,7 +8,7 @@ Before=umount.target
 
 [Service]
 Type=oneshot
-RemainAfterExit=no
+RemainAfterExit=yes
 ExecStart=/usr/lib/town-os/scripts/make-storage.sh
 
 [Install]
