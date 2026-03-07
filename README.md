@@ -59,6 +59,7 @@ Once the VM is running, use `make vm-ip` to resolve its IP address.
 | `virtualbox-fg`     | Build image, create VBox VM, launch with GUI                   |
 | `virtualbox-release`| Same as `virtualbox` but with release (`:latest`) images       |
 | `stop-virtualbox`   | Power off the VirtualBox VM                                    |
+| `serial`            | Attach to the QEMU serial console (Ctrl-] to disconnect)       |
 | `vm-ip`             | Resolve and print the VM's IP address                          |
 | `clean`             | Remove all image and VM disk files                             |
 | `deps`              | Install required build dependencies via pacman                  |
@@ -78,6 +79,29 @@ Override on the command line, e.g. `make qemu VM_MEMORY=8G`.
 | `VM_MEMORY`        | `4G`                             | RAM allocated to the QEMU VM             |
 | `VM_BRIDGE`        | `virbr0`                         | Bridge interface for VM networking       |
 | `VM_NAME`          | `town-os`                        | VirtualBox VM name                       |
+
+## Serial console
+
+The VM exposes a serial console for debugging when SSH is unavailable. In
+background mode QEMU creates a unix socket at `/tmp/town-os-serial.sock`; in
+foreground mode the serial console is attached directly to stdio.
+
+```
+make serial
+```
+
+This runs `socat` against the socket. Press **Ctrl-]** to disconnect. The kernel
+is configured with `console=ttyS0,115200` so boot messages and a login prompt
+appear on the serial console.
+
+## Network diagnostics
+
+A timer-driven service (`town-os-network-diag.timer`) captures network state
+every 10 seconds and appends it to `/town-os/network-diag.log` on the data
+partition. Each snapshot includes `ip addr`, `ip route`, `nft list ruleset`,
+`iptables-save`, and loaded `nf` kernel modules. This is useful for
+post-mortem debugging of network issues since the log persists on the btrfs
+data disk even if the network goes down.
 
 ## Configuration
 
