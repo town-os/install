@@ -33,7 +33,9 @@ source $HOME/.cargo/env && cargo install --git https://gitea.com/town-os/control
 systemctl enable town-os-make-storage.service town-os-systemcontroller.service town-os-ui.service town-os-network-diag.timer avahi-daemon.service systemd-networkd systemd-networkd-wait-online systemd-resolved sshd.service
 
 sed -i 's/^#PermitRootLogin .*/PermitRootLogin yes/' /etc/ssh/sshd_config
+sed -i 's/^#PasswordAuthentication .*/PasswordAuthentication yes/' /etc/ssh/sshd_config
 mkdir -p /var/log/journal
+# Can't symlink during chroot (bind-mounted), so install.sh handles it after chroot exits
 
 if [ "$BACKEND" = "zfs" ]
 then

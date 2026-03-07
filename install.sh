@@ -161,6 +161,10 @@ cp ./town-os.yaml $MOUNT_POINT/usr/lib/town-os/town-os.yaml
 rsync -a ./scripts/ $MOUNT_POINT/usr/lib/town-os/scripts/
 chroot_cmd bash /usr/lib/town-os/scripts/configure.sh
 
+# Point resolv.conf at systemd-resolved stub — must be done outside chroot
+# because arch-chroot bind-mounts /etc/resolv.conf
+ln -sf /run/systemd/resolve/stub-resolv.conf "$MOUNT_POINT/etc/resolv.conf"
+
 print_info "Installing GRUB bootloader..."
 
 mkdir -p "$MOUNT_POINT/boot/grub"

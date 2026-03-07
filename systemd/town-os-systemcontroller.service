@@ -9,6 +9,7 @@ After=town-os-make-storage.service
 
 [Service]
 Type=exec
+ExecStartPre=/usr/bin/mkdir -p /town-os/data/db /town-os/data/repos
 ExecStartPre=-/usr/bin/podman rm -f systemcontroller
 ExecStart=/usr/bin/podman run --pull=always \
     --name systemcontroller \
@@ -24,6 +25,7 @@ ExecStart=/usr/bin/podman run --pull=always \
     -v /town-os:/town-os:shared \
     -v /var/log:/var/log \
     quay.io/town/town:rc.latest \
+    /systemcontroller \
     -repo-dir /town-os/data/repos \
     -db /town-os/data/db/system.db \
     -btrfs /town-os
