@@ -70,6 +70,7 @@ STORAGE
 
 
 echo Welcome to Town OS >> /etc/issue
+echo 'Welcome to Town OS! Please access http://town-os.local in a browser.' > /etc/motd
 echo 'GRUB_CMDLINE_LINUX_DEFAULT="rootwait console=ttyS0,115200 console=tty0"' >> /etc/default/grub
 echo "GRUB_DISTRIBUTOR=\"Town OS\"" >> /etc/default/grub
 echo GRUB_TERMINAL_OUTPUT=console >> /etc/default/grub
