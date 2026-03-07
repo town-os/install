@@ -10,8 +10,8 @@ the [source repository](https://gitea.com/town-os/town-os).
 Requires an Arch-based host (Arch Linux or Manjaro).
 
 ```
-git clone https://gitea.com/town-os/town-os-install.git
-cd town-os-install
+git clone https://gitea.com/town-os/install.git
+cd install
 make
 ```
 
