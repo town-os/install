@@ -69,7 +69,13 @@ graphroot = "/town-os/containers"
 STORAGE
 
 
-echo Welcome to Town OS >> /etc/issue
+cat > /etc/issue <<'ISSUE'
+This is Town OS: Go to http://town-os.local to administer the system remotely
+SSH: ssh root@\4 (password: enjoytownos)
+
+Welcome to Town OS! \r (\m)
+
+ISSUE
 echo 'Welcome to Town OS! Please access http://town-os.local in a browser.' > /etc/motd
 echo 'GRUB_CMDLINE_LINUX_DEFAULT="rootwait console=ttyS0,115200 console=tty0"' >> /etc/default/grub
 echo "GRUB_DISTRIBUTOR=\"Town OS\"" >> /etc/default/grub
