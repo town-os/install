@@ -32,19 +32,19 @@ else
     # mdadm mode: create an md array, then format it
     debug "Creating mdadm array from ${disk_count} disk(s): ${disk_list[*]}"
     mdadm --create /dev/md0 --level=1 --raid-devices=${disk_count} ${disk_list[@]} --run
-    mkfs_btrfs -L "$LABEL" /dev/md0
+    mkfs_btrfs -f -L "$LABEL" /dev/md0
     mkdir -p "$MOUNT_POINT"
     mount /dev/md0 "$MOUNT_POINT"
   else
     # native btrfs raid mode
     if [ "$disk_count" -eq 1 ]
     then
-      mkfs_btrfs -L "$LABEL" ${disk_list[0]}
+      mkfs_btrfs -f -L "$LABEL" ${disk_list[0]}
     elif [ "$disk_count" -eq 2 ]
     then
-      mkfs_btrfs -L "$LABEL" -d raid1 -m raid1 ${disk_list[@]}
+      mkfs_btrfs -f -L "$LABEL" -d raid1 -m raid1 ${disk_list[@]}
     else
-      mkfs_btrfs -L "$LABEL" -d raid5 -m raid1 ${disk_list[@]}
+      mkfs_btrfs -f -L "$LABEL" -d raid5 -m raid1 ${disk_list[@]}
     fi
 
     mkdir -p "$MOUNT_POINT"
