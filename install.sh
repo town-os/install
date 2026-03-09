@@ -151,11 +151,9 @@ cp ./initcpio/install/town-squashfs $MOUNT_POINT/usr/lib/initcpio/install/town-s
 cp ./initcpio/hooks/town-squashfs $MOUNT_POINT/usr/lib/initcpio/hooks/town-squashfs
 
 CONTROLLER_IMAGE="${CONTROLLER_IMAGE:-quay.io/town/town:rc.latest}"
-UI_IMAGE="${UI_IMAGE:-quay.io/town/ui:rc.latest}"
 
 rsync -a ./systemd/ $MOUNT_POINT/etc/systemd/system/
 sed -i "s|quay.io/town/town:rc.latest|${CONTROLLER_IMAGE}|g" $MOUNT_POINT/etc/systemd/system/town-os-systemcontroller.service
-sed -i "s|quay.io/town/ui:rc.latest|${UI_IMAGE}|g" $MOUNT_POINT/etc/systemd/system/town-os-ui.service
 chroot_cmd mkdir -p /usr/lib/town-os
 cp ./town-os.yaml $MOUNT_POINT/usr/lib/town-os/town-os.yaml
 rsync -a ./scripts/ $MOUNT_POINT/usr/lib/town-os/scripts/

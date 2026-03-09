@@ -30,7 +30,7 @@ mkinitcpio -P
 curl -sSL sh.rustup.rs >boot-rustup && chmod +x boot-rustup && ./boot-rustup -y && rm boot-rustup
 source $HOME/.cargo/env && cargo install --git https://gitea.com/town-os/control-plane charon && mv /root/.cargo/bin/charon /usr/bin && rm -rf $HOME/.cargo/registry
 
-systemctl enable town-os-make-storage.service town-os-systemcontroller.service town-os-ui.service town-os-network-diag.timer avahi-daemon.service systemd-networkd systemd-networkd-wait-online systemd-resolved sshd.service
+systemctl enable town-os-make-storage.service town-os-systemcontroller.service town-os-network-diag.timer avahi-daemon.service systemd-networkd systemd-networkd-wait-online systemd-resolved sshd.service
 
 sed -i 's/^#PermitRootLogin .*/PermitRootLogin yes/' /etc/ssh/sshd_config
 sed -i 's/^#PasswordAuthentication .*/PasswordAuthentication yes/' /etc/ssh/sshd_config
