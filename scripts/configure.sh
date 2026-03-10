@@ -37,6 +37,14 @@ sed -i 's/^#PasswordAuthentication .*/PasswordAuthentication yes/' /etc/ssh/sshd
 mkdir -p /var/log/journal
 # Can't symlink during chroot (bind-mounted), so install.sh handles it after chroot exits
 
+# Bind systemd-resolved stub listener to 127.0.0.53 only — keep 127.0.0.2 free for rolodex
+mkdir -p /etc/systemd/resolved.conf.d
+cat >/etc/systemd/resolved.conf.d/townos.conf <<RESOLVED
+[Resolve]
+DNSStubListener=yes
+DNSStubListenerExtra=
+RESOLVED
+
 # Prevent systemd-resolved from being stopped or disabled
 mkdir -p /etc/systemd/system/systemd-resolved.service.d
 cat >/etc/systemd/system/systemd-resolved.service.d/no-disable.conf <<NODISABLE
