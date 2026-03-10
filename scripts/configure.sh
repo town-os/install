@@ -37,6 +37,14 @@ sed -i 's/^#PasswordAuthentication .*/PasswordAuthentication yes/' /etc/ssh/sshd
 mkdir -p /var/log/journal
 # Can't symlink during chroot (bind-mounted), so install.sh handles it after chroot exits
 
+# Prevent systemd-resolved from being stopped or disabled
+mkdir -p /etc/systemd/system/systemd-resolved.service.d
+cat >/etc/systemd/system/systemd-resolved.service.d/no-disable.conf <<NODISABLE
+[Unit]
+RefuseManualStop=yes
+ConditionPathExists=
+NODISABLE
+
 if [ "$BACKEND" = "zfs" ]
 then
   systemctl enable zfs-mount.service
@@ -51,6 +59,7 @@ Name=en*
 [Network]
 DHCP=yes
 IPv6AcceptRA=yes
+DNS=127.0.0.2 8.8.8.8
 
 [DHCPv4]
 RouteMetric=100
