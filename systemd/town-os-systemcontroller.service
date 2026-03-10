@@ -22,6 +22,7 @@ ExecStart=/usr/bin/podman run --pull=always \
     -v /run/systemd:/run/systemd \
     -v /run/dbus:/run/dbus \
     -v /dev:/dev \
+    -v /etc/machine-id:/etc/machine-id:ro \
     -v /town-os:/town-os:shared \
     -v /var/log:/var/log \
     quay.io/town/town:rc.latest \
