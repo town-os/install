@@ -15,9 +15,9 @@ cd install
 make
 ```
 
-This installs all dependencies, builds a disk image, auto-detects the available
-hypervisor (prefers QEMU, falls back to VirtualBox), and launches the VM in the
-background. When the VM is ready its IP address is printed.
+This installs all dependencies, builds a disk image (~2.5 GB), auto-detects the
+available hypervisor (prefers QEMU, falls back to VirtualBox), and launches the
+VM in the background. When the VM is ready its IP address is printed.
 
 ## Multicast DNS (town-os.local)
 
