@@ -79,6 +79,29 @@ Override on the command line, e.g. `make qemu VM_MEMORY=8G`.
 | `VM_MEMORY`        | `4G`                             | RAM allocated to the QEMU VM             |
 | `VM_BRIDGE`        | `virbr0`                         | Bridge interface for VM networking       |
 | `VM_NAME`          | `town-os`                        | VirtualBox VM name                       |
+| `LOCAL_DNS`        | *(empty)*                        | Dev DNS override (see below)             |
+
+## Local DNS mode (development)
+
+In production, Town OS routes DNS through rolodex (listening on `127.0.0.2`) to
+resolve package names and other services. For local development you can bypass
+rolodex entirely by setting `LOCAL_DNS`:
+
+```
+make image LOCAL_DNS=1                    # use the build machine's hostname
+make image LOCAL_DNS=myhost.example.com   # use an explicit hostname
+```
+
+When `LOCAL_DNS` is set:
+
+- The systemcontroller receives `-package-dns <hostname>` so it resolves
+  packages and services against the given host instead of rolodex.
+- The network configuration drops `127.0.0.2` from the DNS list (no rolodex).
+- Login banners (`/etc/issue`, `/etc/motd`) point to the specified host
+  instead of `town-os.local`.
+
+When `LOCAL_DNS` is empty or unset (the default), the image is built in
+production mode with rolodex DNS.
 
 ## Serial console
 
@@ -179,3 +202,4 @@ The install script performs the following steps:
 | `UI_IMAGE`         | Container image for the UI service                            |
 | `DEBUG`            | When non-empty, storage scripts run in debug/dry-run mode     |
 | `KEEP_MOUNT`       | When non-empty, skip unmount and USB write; print mount path  |
+| `LOCAL_DNS`        | Bypass rolodex DNS; `1` = build host's hostname, other = literal hostname |

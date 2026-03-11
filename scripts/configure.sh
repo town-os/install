@@ -60,6 +60,14 @@ then
   echo ZPOOL_IMPORT_ALL_VISIBLE=yes >> /etc/default/zfs
 fi
 
+if [ -n "${PACKAGE_DNS:-}" ]; then
+  # LOCAL_DNS mode: no rolodex, use systemd-resolved only
+  NETWORK_DNS="8.8.8.8"
+else
+  # Production: route DNS through rolodex with Google fallback
+  NETWORK_DNS="127.0.0.2 8.8.8.8"
+fi
+
 cat >/etc/systemd/network/10-ethernet.network <<EOF
 [Match]
 Name=en*
@@ -67,7 +75,7 @@ Name=en*
 [Network]
 DHCP=yes
 IPv6AcceptRA=yes
-DNS=127.0.0.2 8.8.8.8
+DNS=${NETWORK_DNS}
 
 [DHCPv4]
 RouteMetric=100
@@ -86,14 +94,20 @@ graphroot = "/town-os/containers"
 STORAGE
 
 
-cat > /etc/issue <<'ISSUE'
-This is Town OS: Go to http://town-os.local to administer the system remotely
+if [ -n "${PACKAGE_DNS:-}" ]; then
+  ADMIN_HOST="${PACKAGE_DNS}"
+else
+  ADMIN_HOST="town-os.local"
+fi
+
+cat > /etc/issue <<ISSUE
+This is Town OS: Go to http://${ADMIN_HOST} to administer the system remotely
 SSH: ssh root@\4 (password: enjoytownos)
 
 Welcome to Town OS! \r (\m)
 
 ISSUE
-echo 'Welcome to Town OS! Please access http://town-os.local in a browser.' > /etc/motd
+echo "Welcome to Town OS! Please access http://${ADMIN_HOST} in a browser." > /etc/motd
 echo 'GRUB_CMDLINE_LINUX_DEFAULT="rootwait console=ttyS0,115200 console=tty0"' >> /etc/default/grub
 echo "GRUB_DISTRIBUTOR=\"Town OS\"" >> /etc/default/grub
 echo GRUB_TERMINAL_OUTPUT=console >> /etc/default/grub

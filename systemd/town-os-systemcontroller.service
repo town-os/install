@@ -29,7 +29,8 @@ ExecStart=/usr/bin/podman run --pull=always \
     /systemcontroller \
     -repo-dir /town-os/data/repos \
     -db /town-os/data/db/system.db \
-    -btrfs /town-os
+    -btrfs /town-os \
+    @PACKAGE_DNS@
 Restart=always
 
 [Install]

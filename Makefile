@@ -1,4 +1,4 @@
-IMAGE            ?= image.raw
+IMAGE            ?= town-os-$(shell date +%Y-%m-%d).img
 IMAGE_SIZE       ?= 12G
 CONTROLLER_IMAGE ?= quay.io/town/town:rc.latest
 UI_IMAGE         ?= quay.io/town/ui:rc.latest
@@ -9,6 +9,7 @@ VM_MEMORY   ?= 4G
 VM_BRIDGE   ?= virbr0
 VM_NAME     ?= town-os
 FOREGROUND  ?=
+LOCAL_DNS   ?=
 
 .PHONY: run run-release stop image image-release qemu qemu-fg \
         qemu-release virtualbox virtualbox-fg virtualbox-release \
@@ -20,19 +21,16 @@ run: stop deps $(IMAGE)
 	  ${PWD}/make/run.sh $(IMAGE)
 
 image:
-	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) UI_IMAGE=$(UI_IMAGE) ${PWD}/make/image.sh $(IMAGE_SIZE) $(IMAGE)
+	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) ${PWD}/make/image.sh $(IMAGE_SIZE) $(IMAGE)
 
-image-release:
-	$(MAKE) image CONTROLLER_IMAGE=quay.io/town/town:latest UI_IMAGE=quay.io/town/ui:latest
+compress-release:
+	sudo lbzip2 $(IMAGE)
 
-run-release:
-	$(MAKE) run CONTROLLER_IMAGE=quay.io/town/town:latest UI_IMAGE=quay.io/town/ui:latest
+image-release: image compress-release
 
-qemu-release:
-	$(MAKE) qemu CONTROLLER_IMAGE=quay.io/town/town:latest UI_IMAGE=quay.io/town/ui:latest
-
-virtualbox-release:
-	$(MAKE) virtualbox CONTROLLER_IMAGE=quay.io/town/town:latest UI_IMAGE=quay.io/town/ui:latest
+run-release: run
+qemu-release: qemu
+virtualbox-release: virtualbox
 
 qemu: deps $(IMAGE)
 	VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_BRIDGE=$(VM_BRIDGE) \

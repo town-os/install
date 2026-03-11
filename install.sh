@@ -152,12 +152,28 @@ cp ./initcpio/hooks/town-squashfs $MOUNT_POINT/usr/lib/initcpio/hooks/town-squas
 
 CONTROLLER_IMAGE="${CONTROLLER_IMAGE:-quay.io/town/town:rc.latest}"
 
+# Resolve LOCAL_DNS into a concrete package DNS name
+PACKAGE_DNS=""
+if [ -n "${LOCAL_DNS:-}" ]; then
+  if [ "$LOCAL_DNS" = "1" ]; then
+    PACKAGE_DNS="$(hostname)"
+  else
+    PACKAGE_DNS="$LOCAL_DNS"
+  fi
+fi
+export PACKAGE_DNS
+
 rsync -a ./systemd/ $MOUNT_POINT/etc/systemd/system/
 sed -i "s|quay.io/town/town:rc.latest|${CONTROLLER_IMAGE}|g" $MOUNT_POINT/etc/systemd/system/town-os-systemcontroller.service
+if [ -n "$PACKAGE_DNS" ]; then
+  sed -i "s|@PACKAGE_DNS@|-package-dns ${PACKAGE_DNS}|g" $MOUNT_POINT/etc/systemd/system/town-os-systemcontroller.service
+else
+  sed -i "/@PACKAGE_DNS@/d" $MOUNT_POINT/etc/systemd/system/town-os-systemcontroller.service
+fi
 chroot_cmd mkdir -p /usr/lib/town-os
 cp ./town-os.yaml $MOUNT_POINT/usr/lib/town-os/town-os.yaml
 rsync -a ./scripts/ $MOUNT_POINT/usr/lib/town-os/scripts/
-chroot_cmd bash /usr/lib/town-os/scripts/configure.sh
+env -i HOME=/root PACKAGE_DNS="$PACKAGE_DNS" arch-chroot $MOUNT_POINT sh -lc "bash /usr/lib/town-os/scripts/configure.sh"
 
 # Point resolv.conf at systemd-resolved stub — must be done outside chroot
 # because arch-chroot bind-mounts /etc/resolv.conf
