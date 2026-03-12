@@ -204,6 +204,11 @@ menuentry "Town OS" {
     linux /boot/$KERNEL root=UUID=$DATA_UUID rootwait rw console=ttyS0,115200 console=tty0
     initrd /boot/$INITRD
 }
+
+menuentry "Sledgehammer - Erase Permanent Storage And Reboot" {
+    linux /boot/$KERNEL root=UUID=$DATA_UUID rootwait rw console=ttyS0,115200 console=tty0 town.sledgehammer
+    initrd /boot/$INITRD
+}
 EOF
 
 chroot_cmd grub-install --target=x86_64-efi \

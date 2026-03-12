@@ -1,0 +1,15 @@
+[Unit]
+Description=Sledgehammer - Erase permanent storage and reboot
+DefaultDependencies=no
+After=systemd-udev-settle.service
+ConditionKernelCommandLine=town.sledgehammer
+
+Conflicts=umount.target
+Before=umount.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/town-os/scripts/sledgehammer.sh
+
+[Install]
+WantedBy=local-fs.target
