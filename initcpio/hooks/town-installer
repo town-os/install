@@ -1,0 +1,13 @@
+#!/usr/bin/ash
+
+run_hook() {
+    # Skip if /town-os is already provisioned
+    mkdir -p /town-os
+    if mount /town-os 2>/dev/null && mountpoint -q /town-os; then
+        umount /town-os
+        return
+    fi
+
+    msg ":: Launching Town OS installer..."
+    /usr/bin/ttyforce run
+}

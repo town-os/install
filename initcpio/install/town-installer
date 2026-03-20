@@ -1,0 +1,18 @@
+#!/bin/bash
+
+build() {
+    add_module btrfs
+    add_binary /usr/bin/ttyforce
+    add_binary mountpoint
+    add_binary mount
+    add_binary mkdir
+    add_binary btrfs
+    add_runscript
+}
+
+help() {
+    cat <<HELPEOF
+Runs ttyforce in the initrd to detect and provision hardware
+before the root filesystem is mounted.
+HELPEOF
+}

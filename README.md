@@ -21,11 +21,14 @@ VM in the background. When the VM is ready its IP address is printed.
 
 ## Multicast DNS (town-os.local)
 
-The VM advertises itself as `town-os.local` via avahi/mDNS. For this to work
-from the host when using the default `virbr0` bridge (libvirt NAT), the host's
-avahi daemon must have mDNS reflection enabled. `make deps` configures this
-automatically by setting `enable-reflector=yes` in `/etc/avahi/avahi-daemon.conf`
-and restarting the service.
+The VM advertises itself as `town-os.local` via avahi/mDNS. To use a different
+name, set the `IMAGE_HOSTNAME` variable at build time (e.g. `make image IMAGE_HOSTNAME=mybox`
+will advertise as `mybox.local`).
+
+For mDNS to work from the host when using the default `virbr0` bridge (libvirt
+NAT), the host's avahi daemon must have mDNS reflection enabled. `make deps`
+configures this automatically by setting `enable-reflector=yes` in
+`/etc/avahi/avahi-daemon.conf` and restarting the service.
 
 If you've already run `make deps` and `town-os.local` still doesn't resolve,
 verify manually:
@@ -202,4 +205,5 @@ The install script performs the following steps:
 | `UI_IMAGE`         | Container image for the UI service                            |
 | `DEBUG`            | When non-empty, storage scripts run in debug/dry-run mode     |
 | `KEEP_MOUNT`       | When non-empty, skip unmount and USB write; print mount path  |
+| `IMAGE_HOSTNAME`   | Set the system hostname and mDNS name (default: `town-os`, i.e. `town-os.local`) |
 | `LOCAL_DNS`        | Bypass rolodex DNS; `1` = build host's hostname, other = literal hostname |

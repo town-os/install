@@ -17,20 +17,31 @@ ln -sf /usr/share/zoneinfo/UTC /etc/localtime
 locale-gen
 echo LANG=en_US.UTF-8 >/etc/locale.conf
 echo KEYMAP=us >/etc/vconsole.conf
-echo town-os >/etc/hostname
+echo "${IMAGE_HOSTNAME:-town-os}" >/etc/hostname
 
 # Configure mkinitcpio for squashfs boot
 # Remove autodetect — it strips modules to only those found on the build host
 # (a loopback in a chroot), so USB/AHCI/SCSI drivers would be missing at boot
-sed -i 's/^HOOKS=.*/HOOKS=(base udev modconf kms keyboard keymap consolefont block filesystems fsck town-squashfs)/' /etc/mkinitcpio.conf
+sed -i 's/^HOOKS=.*/HOOKS=(base udev modconf kms keyboard keymap consolefont block filesystems fsck town-installer town-squashfs)/' /etc/mkinitcpio.conf
 sed -i 's/^MODULES=.*/MODULES=(loop overlay squashfs nf_tables)/' /etc/mkinitcpio.conf
+
+curl -sSL sh.rustup.rs >boot-rustup && chmod +x boot-rustup && ./boot-rustup -y && rm boot-rustup
+source $HOME/.cargo/env && cargo install --git https://gitea.com/town-os/control-plane charon && mv /root/.cargo/bin/charon /usr/bin
+
+# Install ttyforce — interactive installer TUI for network + disk provisioning
+if [ -n "${TTYFORCE_DEV:-}" ]; then
+  cargo install --git https://github.com/erikh/ttyforce ttyforce
+else
+  cargo install ttyforce@0.2.0-alpha2
+fi
+mv /root/.cargo/bin/ttyforce /usr/bin
+
+rm -rf $HOME/.cargo/registry
 
 mkinitcpio -P
 
-curl -sSL sh.rustup.rs >boot-rustup && chmod +x boot-rustup && ./boot-rustup -y && rm boot-rustup
-source $HOME/.cargo/env && cargo install --git https://gitea.com/town-os/control-plane charon && mv /root/.cargo/bin/charon /usr/bin && rm -rf $HOME/.cargo/registry
-
-systemctl enable town-os-make-storage.service town-os-systemcontroller.service town-os-sledgehammer.service town-os-network-diag.timer avahi-daemon.service systemd-networkd systemd-networkd-wait-online systemd-resolved sshd.service
+systemctl set-default multi-user.target
+systemctl enable town-os-systemcontroller.service town-os-sledgehammer.service town-os-network-diag.timer avahi-daemon.service systemd-networkd systemd-networkd-wait-online systemd-resolved sshd.service
 
 sed -i 's/^#PermitRootLogin .*/PermitRootLogin yes/' /etc/ssh/sshd_config
 sed -i 's/^#PasswordAuthentication .*/PasswordAuthentication yes/' /etc/ssh/sshd_config
@@ -64,8 +75,9 @@ if [ -n "${PACKAGE_DNS:-}" ]; then
   # LOCAL_DNS mode: no rolodex, use systemd-resolved only
   NETWORK_DNS="8.8.8.8"
 else
-  # Production: route DNS through rolodex with Google fallback
-  NETWORK_DNS="127.0.0.2 8.8.8.8"
+  # Production: use Cloudflare DNS initially; rolodex overwrites
+  # /etc/resolv.conf with 127.0.0.2 once it starts
+  NETWORK_DNS="1.1.1.1"
 fi
 
 cat >/etc/systemd/network/10-ethernet.network <<EOF
@@ -108,6 +120,6 @@ Welcome to Town OS! \r (\m)
 
 ISSUE
 echo "Welcome to Town OS! Please access http://${ADMIN_HOST} in a browser." > /etc/motd
-echo 'GRUB_CMDLINE_LINUX_DEFAULT="rootwait console=ttyS0,115200 console=tty0"' >> /etc/default/grub
+echo 'GRUB_CMDLINE_LINUX_DEFAULT="rootwait console=tty0 console=ttyS0,115200"' >> /etc/default/grub
 echo "GRUB_DISTRIBUTOR=\"Town OS\"" >> /etc/default/grub
 echo GRUB_TERMINAL_OUTPUT=console >> /etc/default/grub

@@ -146,9 +146,11 @@ genfstab -U $MOUNT_POINT >> $MOUNT_POINT/etc/fstab
 # remount the overlay as ext4
 sed -i '\|[[:space:]]/[[:space:]]|d' $MOUNT_POINT/etc/fstab
 
-# Install squashfs boot hooks into the chroot
+# Install initcpio hooks into the chroot
 cp ./initcpio/install/town-squashfs $MOUNT_POINT/usr/lib/initcpio/install/town-squashfs
 cp ./initcpio/hooks/town-squashfs $MOUNT_POINT/usr/lib/initcpio/hooks/town-squashfs
+cp ./initcpio/install/town-installer $MOUNT_POINT/usr/lib/initcpio/install/town-installer
+cp ./initcpio/hooks/town-installer $MOUNT_POINT/usr/lib/initcpio/hooks/town-installer
 
 CONTROLLER_IMAGE="${CONTROLLER_IMAGE:-quay.io/town/town:rc.latest}"
 
@@ -173,7 +175,7 @@ fi
 chroot_cmd mkdir -p /usr/lib/town-os
 cp ./town-os.yaml $MOUNT_POINT/usr/lib/town-os/town-os.yaml
 rsync -a ./scripts/ $MOUNT_POINT/usr/lib/town-os/scripts/
-env -i HOME=/root PACKAGE_DNS="$PACKAGE_DNS" arch-chroot $MOUNT_POINT sh -lc "bash /usr/lib/town-os/scripts/configure.sh"
+env -i HOME=/root PACKAGE_DNS="$PACKAGE_DNS" IMAGE_HOSTNAME="${IMAGE_HOSTNAME:-town-os}" TTYFORCE_DEV="${TTYFORCE_DEV:-}" arch-chroot $MOUNT_POINT sh -lc "bash /usr/lib/town-os/scripts/configure.sh"
 
 # Point resolv.conf at systemd-resolved stub — must be done outside chroot
 # because arch-chroot bind-mounts /etc/resolv.conf
