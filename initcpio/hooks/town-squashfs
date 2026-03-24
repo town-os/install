@@ -58,4 +58,38 @@ town_squashfs_mount() {
     # Bind-mount /boot from the data partition so GRUB and kernel updates persist
     mkdir -p "$newroot/boot"
     mount --bind "$newroot/.town/data/boot" "$newroot/boot"
+
+    # If persistent storage was provisioned, mount it and set up etc/var overlays
+    mkdir -p /town-os
+    town_os_found=0
+    if mountpoint -q /town-os; then
+        town_os_found=1
+    else
+        # Scan for the btrfs partition ttyforce created
+        for dev in /dev/sd*1 /dev/nvme*p1 /dev/vd*1; do
+            [ -b "$dev" ] || continue
+            if mount -t btrfs "$dev" /town-os 2>/dev/null; then
+                town_os_found=1
+                break
+            fi
+        done
+    fi
+    if [ "$town_os_found" = "1" ]; then
+        mkdir -p "$newroot/town-os"
+        mount --move /town-os "$newroot/town-os"
+
+        # Re-mount /etc with persistent btrfs-backed upper
+        if [ -d "$newroot/town-os/etc/overlays/root" ]; then
+            mount -t overlay overlay \
+                -o "lowerdir=$newroot/.town/sfs/etc,upperdir=$newroot/town-os/etc/overlays/root,workdir=$newroot/town-os/etc/overlays/work" \
+                "$newroot/etc"
+        fi
+
+        # Re-mount /var with persistent btrfs-backed upper
+        if [ -d "$newroot/town-os/var/overlays/root" ]; then
+            mount -t overlay overlay \
+                -o "lowerdir=$newroot/.town/sfs/var,upperdir=$newroot/town-os/var/overlays/root,workdir=$newroot/town-os/var/overlays/work" \
+                "$newroot/var"
+        fi
+    fi
 }

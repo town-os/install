@@ -7,7 +7,11 @@ VM_MEMORY="${VM_MEMORY:?VM_MEMORY is required}"
 VM_BRIDGE="${VM_BRIDGE:?VM_BRIDGE is required}"
 FOREGROUND="${FOREGROUND:-0}"
 
-sudo ip link set "${VM_BRIDGE}" allmulticast on 2>/dev/null || true
+sudo -E ip link set "${VM_BRIDGE}" allmulticast on 2>/dev/null || true
+
+# Allow multicast (mDNS) through the bridge — br_netfilter drops it by default
+sudo -E sysctl -w net.bridge.bridge-nf-call-iptables=0 2>/dev/null || true
+sudo -E sysctl -w net.bridge.bridge-nf-call-ip6tables=0 2>/dev/null || true
 
 for i in 0 1 2 3; do
   if [ ! -f "disk${i}.img" ]; then
@@ -22,7 +26,8 @@ if [ "${FOREGROUND}" != "1" ]; then
   DAEMON_ARGS=(-daemonize -pidfile qemu.pid)
   SERIAL_ARGS=(-serial "unix:/tmp/town-os-serial.sock,server=on,wait=off")
 else
-  SERIAL_ARGS=(-serial mon:stdio)
+  DAEMON_ARGS=(-pidfile qemu.pid)
+  SERIAL_ARGS=(-nographic -serial mon:stdio)
 fi
 
 # Generate a stable random MAC in the QEMU OUI range (52:54:00:xx:xx:xx)
@@ -50,7 +55,7 @@ sudo -E qemu-system-x86_64 \
   "${DAEMON_ARGS[@]}"
 
 if [ "${FOREGROUND}" != "1" ]; then
-  PID=$(sudo cat qemu.pid)
+  PID=$(sudo -E cat qemu.pid)
   echo "QEMU running in background (PID ${PID})"
   echo "Serial console: socat - UNIX-CONNECT:/tmp/town-os-serial.sock"
 

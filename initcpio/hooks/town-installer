@@ -1,0 +1,70 @@
+#!/usr/bin/ash
+
+mount_town_os() {
+    # Scan for a btrfs partition with Town OS overlay dirs
+    for dev in /dev/sd*1 /dev/nvme*p1 /dev/vd*1; do
+        [ -b "$dev" ] || continue
+        if mount -t btrfs "$dev" /town-os 2>/dev/null; then
+            if [ -d /town-os/etc ] || [ -d /town-os/var ]; then
+                return 0
+            fi
+            umount /town-os
+        fi
+    done
+    return 1
+}
+
+prepare_networking() {
+    # Create directories dhcpcd needs — ttyforce --initrd handles the rest
+    mkdir -p /var/db/dhcpcd /var/run/dhcpcd /etc /etc/systemd/network
+    : > /etc/resolv.conf
+}
+
+run_hook() {
+    # Wait for udev to finish discovering all block devices
+    msg ":: town-installer: waiting for udev..."
+    udevadm settle --timeout=10
+
+    # Skip if /town-os is already provisioned (btrfs exists on a data disk)
+    mkdir -p /town-os
+    echo "town-installer: checking for existing btrfs..." > /dev/kmsg
+    if mount_town_os; then
+        echo "town-installer: SKIPPING - btrfs found, already provisioned" > /dev/kmsg
+        umount /town-os
+        return
+    fi
+    echo "town-installer: no btrfs found, will launch ttyforce" > /dev/kmsg
+
+    # Prepare directories for ttyforce's --initrd networking (dhcpcd)
+    prepare_networking
+
+    msg ":: Launching Town OS installer..."
+
+    # Determine which TTY to direct ttyforce at based on the kernel console= params.
+    # The last console= parameter is the primary console (/dev/console).
+    export TERM=linux
+    TTY_ARGS=""
+    last_console=$(cat /proc/cmdline | tr ' ' '\n' | grep '^console=' | tail -1 | sed 's/^console=//' | sed 's/,.*//')
+    if [ -n "$last_console" ] && [ -e "/dev/$last_console" ]; then
+        TTY_ARGS="--tty /dev/$last_console"
+    fi
+
+    /usr/bin/ttyforce initrd --etc-prefix /town-os/etc/overlays/root $TTY_ARGS
+    echo "town-installer: ttyforce exited with code $?" > /dev/kmsg
+
+    # ttyforce unmounts /town-os before returning — re-mount to persist config
+    mkdir -p /town-os
+    if mount -t btrfs /town-os 2>/dev/null || mount_town_os; then
+        msg ":: Persisting network config to /town-os..."
+
+        # Create etc/var overlay directories on persistent storage
+        mkdir -p /town-os/etc/overlays/root /town-os/etc/overlays/work
+        mkdir -p /town-os/var/overlays/root /town-os/var/overlays/work
+
+        # Mask the catch-all 10-ethernet.network so only the selected interface is active
+        mkdir -p /town-os/etc/overlays/root/systemd/network
+        : > /town-os/etc/overlays/root/systemd/network/10-ethernet.network
+
+        umount /town-os
+    fi
+}

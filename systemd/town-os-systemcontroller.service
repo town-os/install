@@ -3,9 +3,7 @@
 Description=Town OS System Controller
 DefaultDependencies=yes
 Requires=network-online.target
-Requires=town-os-make-storage.service
 After=network-online.target
-After=town-os-make-storage.service
 
 [Service]
 Type=exec

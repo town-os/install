@@ -17,20 +17,30 @@ ln -sf /usr/share/zoneinfo/UTC /etc/localtime
 locale-gen
 echo LANG=en_US.UTF-8 >/etc/locale.conf
 echo KEYMAP=us >/etc/vconsole.conf
-echo town-os >/etc/hostname
+echo "${IMAGE_HOSTNAME:-town-os}" >/etc/hostname
 
 # Configure mkinitcpio for squashfs boot
 # Remove autodetect — it strips modules to only those found on the build host
 # (a loopback in a chroot), so USB/AHCI/SCSI drivers would be missing at boot
-sed -i 's/^HOOKS=.*/HOOKS=(base udev modconf kms keyboard keymap consolefont block filesystems fsck town-squashfs)/' /etc/mkinitcpio.conf
-sed -i 's/^MODULES=.*/MODULES=(loop overlay squashfs nf_tables)/' /etc/mkinitcpio.conf
+sed -i 's/^HOOKS=.*/HOOKS=(base udev modconf kms keyboard keymap consolefont block filesystems fsck town-installer town-squashfs)/' /etc/mkinitcpio.conf
+sed -i 's/^MODULES=.*/MODULES=(loop overlay squashfs nf_tables ahci sd_mod virtio_blk virtio_scsi nvme usb_storage uas e1000 e1000e igb ixgbe i40e ice virtio_net r8169 tg3 bnxt_en mlx4_en mlx5_core cfg80211 mac80211 iwlwifi iwlmvm ath9k ath10k_pci ath11k_pci brcmfmac mt76x2u rtw88_pci rtw89_pci)/' /etc/mkinitcpio.conf
+
+curl -sSL sh.rustup.rs >boot-rustup && chmod +x boot-rustup && ./boot-rustup -y && rm boot-rustup
+source $HOME/.cargo/env && cargo install --git https://gitea.com/town-os/control-plane charon && mv /root/.cargo/bin/charon /usr/bin
+
+# Install ttyforce — interactive installer TUI for network + disk provisioning
+if [ -n "${TTYFORCE_DEV:-}" ]; then
+  cargo install --git https://github.com/erikh/ttyforce ttyforce
+else
+  cargo install ttyforce
+fi
+mv /root/.cargo/bin/ttyforce /usr/bin
+
+rm -rf $HOME/.cargo/registry
 
 mkinitcpio -P
 
-curl -sSL sh.rustup.rs >boot-rustup && chmod +x boot-rustup && ./boot-rustup -y && rm boot-rustup
-source $HOME/.cargo/env && cargo install --git https://gitea.com/town-os/control-plane charon && mv /root/.cargo/bin/charon /usr/bin && rm -rf $HOME/.cargo/registry
-
-systemctl enable town-os-make-storage.service town-os-systemcontroller.service town-os-sledgehammer.service town-os-network-diag.timer avahi-daemon.service systemd-networkd systemd-networkd-wait-online systemd-resolved sshd.service
+# systemd unit enablement is handled via D-Bus in install.sh (Podman container phase)
 
 sed -i 's/^#PermitRootLogin .*/PermitRootLogin yes/' /etc/ssh/sshd_config
 sed -i 's/^#PasswordAuthentication .*/PasswordAuthentication yes/' /etc/ssh/sshd_config
@@ -55,34 +65,13 @@ NODISABLE
 
 if [ "$BACKEND" = "zfs" ]
 then
-  systemctl enable zfs-mount.service
+  # zfs-mount.service enablement is handled via D-Bus in install.sh (Podman container phase)
   echo DO_OVERLAY_MOUNTS=yes >> /etc/default/zfs
   echo ZPOOL_IMPORT_ALL_VISIBLE=yes >> /etc/default/zfs
 fi
 
-if [ -n "${PACKAGE_DNS:-}" ]; then
-  # LOCAL_DNS mode: no rolodex, use systemd-resolved only
-  NETWORK_DNS="8.8.8.8"
-else
-  # Production: route DNS through rolodex with Google fallback
-  NETWORK_DNS="127.0.0.2 8.8.8.8"
-fi
-
-cat >/etc/systemd/network/10-ethernet.network <<EOF
-[Match]
-Name=en*
-
-[Network]
-DHCP=yes
-IPv6AcceptRA=yes
-DNS=${NETWORK_DNS}
-
-[DHCPv4]
-RouteMetric=100
-
-[DHCPv6]
-RouteMetric=100
-EOF
+# Network config is written by ttyforce at boot and persisted via btrfs etc overlay.
+# No catch-all network config here — only the ttyforce-selected interface should be active.
 
 # Configure podman storage — use native btrfs/zfs driver so we avoid
 # overlayfs-on-overlayfs (the root is squashfs+tmpfs overlay)
@@ -97,7 +86,7 @@ STORAGE
 if [ -n "${PACKAGE_DNS:-}" ]; then
   ADMIN_HOST="${PACKAGE_DNS}"
 else
-  ADMIN_HOST="town-os.local"
+  ADMIN_HOST="${IMAGE_HOSTNAME:-town-os}.local"
 fi
 
 cat > /etc/issue <<ISSUE
@@ -108,6 +97,6 @@ Welcome to Town OS! \r (\m)
 
 ISSUE
 echo "Welcome to Town OS! Please access http://${ADMIN_HOST} in a browser." > /etc/motd
-echo 'GRUB_CMDLINE_LINUX_DEFAULT="rootwait console=ttyS0,115200 console=tty0"' >> /etc/default/grub
+echo 'GRUB_CMDLINE_LINUX_DEFAULT="rootwait console=tty0 console=ttyS0,115200"' >> /etc/default/grub
 echo "GRUB_DISTRIBUTOR=\"Town OS\"" >> /etc/default/grub
 echo GRUB_TERMINAL_OUTPUT=console >> /etc/default/grub

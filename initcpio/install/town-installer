@@ -1,0 +1,35 @@
+#!/bin/bash
+
+build() {
+    add_module btrfs
+    add_binary /usr/bin/ttyforce
+    add_binary setsid
+    add_binary wpa_supplicant
+    add_binary wpa_cli
+    add_binary dhcpcd
+    add_binary ip
+    add_binary iw
+    add_binary iwlist
+    add_binary rfkill
+    add_binary ping
+    add_binary pkill
+    add_binary agetty
+    add_binary parted
+    add_binary partprobe
+    add_binary udevadm
+    add_binary mkfs.btrfs
+    add_binary wipefs
+    add_binary umount
+    add_binary mountpoint
+    add_binary mount
+    add_binary mkdir
+    add_binary btrfs
+    add_runscript
+}
+
+help() {
+    cat <<HELPEOF
+Runs ttyforce in the initrd to detect and provision hardware
+before the root filesystem is mounted.
+HELPEOF
+}
