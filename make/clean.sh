@@ -14,4 +14,4 @@ rm -f "${VM_NAME}-boot.vdi" \
   "${VM_NAME}-disk0.vdi" "${VM_NAME}-disk1.vdi" \
   "${VM_NAME}-disk2.vdi" "${VM_NAME}-disk3.vdi"
 
-sudo rm -f qemu.pid
+sudo -E rm -f qemu.pid

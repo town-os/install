@@ -13,9 +13,12 @@ LOCAL_DNS   ?=
 
 .PHONY: run run-release stop image image-release qemu qemu-fg \
         qemu-release virtualbox virtualbox-fg virtualbox-release \
-        stop-qemu stop-virtualbox vm-ip serial clean cleanup-loopback deps
+        stop-qemu stop-virtualbox vm-ip serial clean cleanup-loopback \
+        deps deps-debian
 
-run: stop deps $(IMAGE)
+rebuild-qemu: stop clean image qemu
+
+run: stop $(IMAGE)
 	VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_BRIDGE=$(VM_BRIDGE) \
 	  VM_NAME=$(VM_NAME) IMAGE=$(IMAGE) FOREGROUND=$(FOREGROUND) \
 	  ${PWD}/make/run.sh $(IMAGE)
@@ -24,7 +27,7 @@ image:
 	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) ${PWD}/make/image.sh $(IMAGE_SIZE) $(IMAGE)
 
 compress-release:
-	sudo lbzip2 $(IMAGE)
+	sudo -E lbzip2 $(IMAGE)
 
 image-release: image compress-release
 
@@ -32,12 +35,12 @@ run-release: run
 qemu-release: qemu
 virtualbox-release: virtualbox
 
-qemu: deps $(IMAGE)
+qemu: $(IMAGE)
 	VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_BRIDGE=$(VM_BRIDGE) \
 	  VM_NAME=$(VM_NAME) IMAGE=$(IMAGE) \
 	  ${PWD}/make/qemu.sh $(IMAGE)
 
-qemu-fg: deps $(IMAGE)
+qemu-fg: $(IMAGE)
 	FOREGROUND=1 VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_BRIDGE=$(VM_BRIDGE) \
 	  ${PWD}/make/qemu.sh $(IMAGE)
 
@@ -69,6 +72,9 @@ clean: stop
 
 deps:
 	${PWD}/make/deps.sh
+
+deps-debian:
+	${PWD}/make/deps-debian.sh
 
 cleanup-loopback:
 	${PWD}/make/cleanup-loopback.sh

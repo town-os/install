@@ -22,24 +22,20 @@ eject_loopback() {
   losetup -j $IMAGE | awk -F: '{ print $1 }' | xargs -I{} losetup -d {}
 }
 
+cleanup_build_container() {
+  podman stop town-build 2>/dev/null || true
+  podman rm town-build 2>/dev/null || true
+}
+
 cleanup_mount() {
   print_info "Ejecting loopback and unmounting partitions..."
+  cleanup_build_container
 
-  if [ -d $MOUNT_POINT ] && mountpoint -q $MOUNT_POINT
-  then
-    while ! umount -Rf $MOUNT_POINT && ! lsof $MOUNT_POINT
-    do
-      print_warning "Waiting for processes to finish; do not press Ctrl-C until this process completes"
-
-      fuser -cfk $MOUNT_POINT || :
-      systemctl daemon-reload
-      sleep 30
-    done
-  fi
-
-  if [ -d $MOUNT_POINT ]
-  then
-    rm -rf $MOUNT_POINT
+  if [ -d "$MOUNT_POINT" ]; then
+    # Unmount all submounts (boot/efi, etc.) then the main mount
+    fuser -cfk "$MOUNT_POINT" 2>/dev/null || :
+    umount -Rf "$MOUNT_POINT" 2>/dev/null || umount -Rl "$MOUNT_POINT" 2>/dev/null || :
+    rm -rf "$MOUNT_POINT"
   fi
 }
 
@@ -77,6 +73,9 @@ then
 fi
 
 MOUNT_POINT=$(mktemp -d)
+
+trap 'cleanup_mount; eject_loopback' EXIT
+
 truncate -s $IMAGE_SIZE $IMAGE
 
 losetup -f --partscan $IMAGE
@@ -122,7 +121,7 @@ mount "$PART3" "$MOUNT_POINT"
 mkdir -p "$MOUNT_POINT/boot/efi"
 mount "$PART2" "$MOUNT_POINT/boot/efi"
 
-PACKAGES="base base-devel avahi clang linux618 podman efibootmgr grub openssh"
+PACKAGES="base base-devel avahi clang linux618 podman efibootmgr grub openssh dhcpcd parted"
 
 if [ "$STORAGE_BACKEND" = "zfs" ]
 then
@@ -175,7 +174,54 @@ fi
 chroot_cmd mkdir -p /usr/lib/town-os
 cp ./town-os.yaml $MOUNT_POINT/usr/lib/town-os/town-os.yaml
 rsync -a ./scripts/ $MOUNT_POINT/usr/lib/town-os/scripts/
-env -i HOME=/root PACKAGE_DNS="$PACKAGE_DNS" IMAGE_HOSTNAME="${IMAGE_HOSTNAME:-town-os}" TTYFORCE_DEV="${TTYFORCE_DEV:-}" arch-chroot $MOUNT_POINT sh -lc "bash /usr/lib/town-os/scripts/configure.sh"
+env -i HOME=/root PACKAGE_DNS="$PACKAGE_DNS" IMAGE_HOSTNAME="${IMAGE_HOSTNAME:-town-os}" TTYFORCE_DEV="${TTYFORCE_DEV:-}" TTYFORCE_LATEST="${TTYFORCE_LATEST:-}" arch-chroot $MOUNT_POINT sh -lc "bash /usr/lib/town-os/scripts/configure.sh"
+
+# --- D-Bus systemd configuration via Podman container ---
+print_info "Configuring systemd units via D-Bus in Podman container..."
+
+podman run -d --systemd=true --name town-build --replace \
+  --network=none \
+  --rootfs "$MOUNT_POINT" \
+  /sbin/init --unit=basic.target
+
+# Wait for systemd to be ready (up to 30s)
+for i in $(seq 1 60); do
+  if podman exec town-build busctl get-property org.freedesktop.systemd1 \
+    /org/freedesktop/systemd1 org.freedesktop.systemd1.Manager SystemState \
+    2>/dev/null | grep -q running; then
+    break
+  fi
+  sleep 0.5
+done
+
+podman exec town-build busctl call \
+  org.freedesktop.systemd1 /org/freedesktop/systemd1 \
+  org.freedesktop.systemd1.Manager SetDefaultTarget "sb" \
+  "multi-user.target" false
+
+podman exec town-build busctl call \
+  org.freedesktop.systemd1 /org/freedesktop/systemd1 \
+  org.freedesktop.systemd1.Manager EnableUnitFiles "asbb" 9 \
+  "town-os-systemcontroller.service" \
+  "town-os-sledgehammer.service" \
+  "town-os-network-diag.timer" \
+  "avahi-daemon.service" \
+  "systemd-networkd.service" \
+  "systemd-networkd-wait-online.service" \
+  "systemd-resolved.service" \
+  "sshd.service" \
+  "serial-getty@ttyS0.service" \
+  false false
+
+if [ "$STORAGE_BACKEND" = "zfs" ]; then
+  podman exec town-build busctl call \
+    org.freedesktop.systemd1 /org/freedesktop/systemd1 \
+    org.freedesktop.systemd1.Manager EnableUnitFiles "asbb" 1 \
+    "zfs-mount.service" false false
+fi
+
+cleanup_build_container
+print_info "systemd D-Bus configuration complete."
 
 # Point resolv.conf at systemd-resolved stub — must be done outside chroot
 # because arch-chroot bind-mounts /etc/resolv.conf
@@ -193,6 +239,10 @@ INITRD=$(basename $(ls "$MOUNT_POINT"/boot/initramfs-*.img | grep -v fallback | 
 # Write grub.cfg directly — grub-mkconfig can't resolve UUIDs correctly
 # inside a loopback chroot, so we generate a known-correct config
 cat > "$MOUNT_POINT/boot/grub/grub.cfg" <<EOF
+serial --speed=115200 --unit=0 --word=8 --parity=no --stop=1
+terminal_input serial console
+terminal_output serial console
+
 set timeout=5
 set default=0
 
@@ -203,12 +253,17 @@ insmod search_fs_uuid
 search --no-floppy --fs-uuid --set=root $DATA_UUID
 
 menuentry "Town OS" {
-    linux /boot/$KERNEL root=UUID=$DATA_UUID rootwait rw console=ttyS0,115200 console=tty0
+    linux /boot/$KERNEL root=UUID=$DATA_UUID rootwait rw console=tty0
+    initrd /boot/$INITRD
+}
+
+menuentry "Town OS (Serial Console)" {
+    linux /boot/$KERNEL root=UUID=$DATA_UUID rootwait rw console=ttyS0,115200
     initrd /boot/$INITRD
 }
 
 menuentry "Sledgehammer - Erase Permanent Storage And Reboot" {
-    linux /boot/$KERNEL root=UUID=$DATA_UUID rootwait rw console=ttyS0,115200 console=tty0 town.sledgehammer
+    linux /boot/$KERNEL root=UUID=$DATA_UUID rootwait rw console=tty0 console=ttyS0,115200 town.sledgehammer
     initrd /boot/$INITRD
 }
 EOF

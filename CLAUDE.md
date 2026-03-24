@@ -5,16 +5,43 @@ Arch-based disk image builder for Town OS. Produces a bootable raw image with a 
 ## Build & Run
 
 ```sh
-make deps    # install host dependencies (Arch-based host required)
-make         # build image and launch VM (auto-detects QEMU or VirtualBox)
-make image   # build image only
-make qemu-fg # build and launch QEMU with serial console attached
-make serial  # attach to running QEMU serial console (Ctrl-] to disconnect)
-make stop    # stop all VMs
-make clean   # remove all images and VM disks
+make deps        # install host dependencies (Arch Linux)
+make deps-debian # install host dependencies (Debian/Ubuntu)
+make image       # build image only (requires root, Arch host)
+make             # build image and launch VM
+make qemu-fg     # build and launch QEMU with serial console attached
+make serial      # attach to running QEMU serial console (Ctrl-] to disconnect)
+make stop        # stop all VMs
+make clean       # remove all images and VM disks
 ```
 
 Requires root for image building (install.sh uses loopback mounts, chroot, pacstrap).
+
+### Arch Linux Setup
+
+```sh
+make deps
+sudo make image
+make qemu-fg
+```
+
+### Debian/Ubuntu Setup
+
+Image building requires Arch-specific tools (`pacstrap`, `mkinitcpio`, `arch-chroot`) that have no Debian equivalent. Install host dependencies for VM launching:
+
+```sh
+make deps-debian
+```
+
+To build images on Debian/Ubuntu, use an Arch Linux container or build on an Arch host and transfer the image.
+
+### Host Dependencies
+
+**Arch Linux** (`make deps`):
+`base-devel` `arch-install-scripts` `parted` `e2fsprogs` `dosfstools` `rsync` `psmisc` `lsof` `squashfs-tools` `libvirt` `dnsmasq` `avahi` `qemu-full` `socat` `lbzip2` `podman` `dbus`
+
+**Debian/Ubuntu** (`make deps-debian`):
+`build-essential` `parted` `e2fsprogs` `dosfstools` `rsync` `psmisc` `lsof` `squashfs-tools` `libvirt-daemon-system` `libvirt-clients` `dnsmasq-base` `avahi-daemon` `qemu-system-x86` `qemu-utils` `socat` `lbzip2` `podman` `dbus` `util-linux`
 
 ## Key Variables
 
@@ -24,6 +51,7 @@ Requires root for image building (install.sh uses loopback mounts, chroot, pacst
 | `LOCAL_DNS` | *(empty)* | Dev DNS override (`1` = auto, or literal hostname) |
 | `CONTROLLER_IMAGE` | `quay.io/town/town:rc.latest` | System controller container |
 | `TTYFORCE_DEV` | *(empty)* | Set non-empty to install ttyforce from git instead of crates.io |
+| `TTYFORCE_LATEST` | *(empty)* | Set non-empty to install the latest ttyforce from crates.io (ignores version pin) |
 | `KEEP_MOUNT` | *(empty)* | Skip unmount after install for debugging |
 
 ## Project Layout
@@ -47,27 +75,51 @@ systemd/
 ## Image Build Flow
 
 1. `install.sh` creates a sparse raw image with GPT: BIOS boot (1 MiB), EFI (512 MiB), ext4 data (remainder)
-2. `pacstrap` bootstraps Arch with base packages, podman, avahi, grub, btrfs-progs, openssh
+2. `pacstrap` bootstraps Arch with base packages, podman, avahi, grub, btrfs-progs, openssh, dhcpcd, parted
 3. Initcpio hooks and systemd services are copied into the chroot
-4. `configure.sh` runs in chroot: installs rust, builds charon + ttyforce, runs mkinitcpio, enables services
-5. GRUB is installed for both UEFI and BIOS boot
-6. Root filesystem is compressed to squashfs (`root.sfs`) on the data partition
-7. Image is shrunk to actual size (~2.5 GB)
+4. `configure.sh` runs in chroot: installs rust, builds charon + ttyforce, runs mkinitcpio
+5. systemd units are enabled via D-Bus in a Podman container (`--rootfs` + `--systemd=true --unit=basic.target`)
+6. GRUB is installed for both UEFI and BIOS boot
+7. Root filesystem is compressed to squashfs (`root.sfs`) on the data partition
+8. Image is shrunk to actual size (~2.5 GB)
 
 ## Boot Sequence
 
 1. GRUB loads kernel + initrd from data partition
-2. **town-installer hook**: checks if `/town-os` (btrfs) is already provisioned; if not, runs `ttyforce run` for interactive hardware setup
-3. **town-squashfs hook**: loop-mounts `root.sfs`, creates tmpfs overlay, switch_root
+2. **town-installer hook**:
+   - Starts serial console (`agetty` on ttyS0)
+   - Waits for udev to settle (block devices to appear)
+   - Scans for existing btrfs on data disks — if found, skips ttyforce (already provisioned)
+   - Prepares dhcpcd directories and resolv.conf
+   - Runs `ttyforce initrd --etc-prefix /town-os/etc/overlays/root`
+   - After ttyforce: re-mounts btrfs, creates overlay dirs, masks catch-all networkd config
+3. **town-squashfs hook**: loop-mounts `root.sfs`, creates tmpfs overlay, scans for btrfs and mounts `/town-os`, overlays `/etc` and `/var` with btrfs-backed upper dirs, switch_root
 4. systemd starts: systemcontroller (podman), avahi, networkd, sshd
+
+## systemd Operations
+
+All systemd operations MUST use D-Bus (`busctl`) instead of the `systemctl` CLI. During image build, systemd calls run inside a Podman container (`--rootfs` + `--systemd=true`) so nothing affects the host. Use `podman exec <container> busctl call org.freedesktop.systemd1 ...` for build-time operations. For host-side developer tooling (`deps.sh`), use `busctl call` directly.
 
 ## Architecture Notes
 
 - **Root is read-only squashfs + tmpfs overlay.** Changes are lost on reboot unless written to `/town-os` (persistent btrfs).
-- **ttyforce runs in the initrd**, not as a systemd service. This gives it exclusive console access before anything else starts.
+- **ttyforce runs in the initrd** via `ttyforce initrd --etc-prefix /town-os/etc/overlays/root`. The `initrd` subcommand uses syscalls and dhcpcd directly (no systemd/dbus). `--etc-prefix` tells ttyforce to write network config (networkd units, resolv.conf, wpa_supplicant) directly into the btrfs overlay upper dir, so it persists across reboots. ttyforce handles disk partitioning, btrfs formatting, mounting/unmounting `/town-os`, and all networking.
+- **Persistent storage layout on `/town-os` (btrfs):**
+  - `/town-os/etc/overlays/root` — overlay upper dir for `/etc`
+  - `/town-os/etc/overlays/work` — overlay work dir for `/etc`
+  - `/town-os/var/overlays/root` — overlay upper dir for `/var`
+  - `/town-os/var/overlays/work` — overlay work dir for `/var`
+  - `/town-os/containers` — podman container storage (graphroot)
 - **Podman uses native btrfs/zfs driver** to avoid overlayfs-on-overlayfs (since root is already an overlay).
 - **DNS**: production uses Cloudflare (1.1.1.1) initially; rolodex overwrites `/etc/resolv.conf` with 127.0.0.2 once running. Dev mode (`LOCAL_DNS`) uses 8.8.8.8 and skips rolodex.
 - **Sledgehammer mode**: GRUB menu entry sets `town.sledgehammer` kernel param, which triggers full wipe of all non-boot disks.
+- **`/.town` directory** holds internal mounts that back the root overlay (squashfs at `/.town/sfs`, data partition at `/.town/data`, tmpfs overlay at `/.town/overlay`). The squashfs is also exposed at `/usb`. Do not modify these.
+- **`/boot`** is bind-mounted from the data partition so kernel/GRUB updates persist.
+- **Build cleanup**: `install.sh` uses a trap to clean up loopback devices and mounts on failure. Use `make cleanup-loopback` to manually clean stale loopback devices.
+- **Kernel modules in initrd**: Storage drivers (`ahci`, `sd_mod`, `virtio_blk`, `virtio_scsi`, `nvme`, `usb_storage`, `uas`) and network drivers (`e1000`, `e1000e`, `igb`, `ixgbe`, `i40e`, `ice`, `virtio_net`, `r8169`, `tg3`, `bnxt_en`, `mlx4_en`, `mlx5_core`) are explicitly included since `autodetect` is disabled.
+- **Initrd binaries**: `ttyforce`, `dhcpcd`, `ip`, `agetty`, `parted`, `partprobe`, `udevadm`, `mkfs.btrfs`, `wipefs`, `btrfs`, plus standard mount/umount/mkdir/mountpoint.
+- **`sudo -E`**: All `sudo` calls in make scripts and install.sh MUST use `-E` to preserve the environment.
+- **No host side effects**: Build and VM tasks (image, qemu, qemu-fg, run) MUST NOT install packages, modify host services, or touch the host's package manager. The `deps` target is manual-only and must never be a dependency of other targets. `pacstrap` inside `install.sh` uses the host's pacman database (unavoidable), but no other host state should be modified during builds.
 
 ## Default Credentials
 
@@ -90,5 +142,13 @@ After modifying hooks or scripts, rebuild and launch:
 ```sh
 make clean && make qemu-fg
 ```
+
+Use `IMAGE_HOSTNAME` to avoid mDNS collisions when a real Town OS instance is already running on the network, or when multiple VMs are being tested simultaneously:
+
+```sh
+IMAGE_HOSTNAME=town-os-dev make clean && make qemu-fg
+```
+
+Each VM gets its own hostname and mDNS name (e.g. `town-os-dev.local`), preventing conflicts with production or other test instances.
 
 Use `make serial` to attach to a backgrounded VM's serial console for debugging boot issues. Network diagnostics are logged to `/town-os/network-diag.log` on the data partition.

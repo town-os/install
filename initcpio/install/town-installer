@@ -3,6 +3,16 @@
 build() {
     add_module btrfs
     add_binary /usr/bin/ttyforce
+    add_binary setsid
+    add_binary dhcpcd
+    add_binary ip
+    add_binary agetty
+    add_binary parted
+    add_binary partprobe
+    add_binary udevadm
+    add_binary mkfs.btrfs
+    add_binary wipefs
+    add_binary umount
     add_binary mountpoint
     add_binary mount
     add_binary mkdir

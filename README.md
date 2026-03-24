@@ -25,6 +25,17 @@ The VM advertises itself as `town-os.local` via avahi/mDNS. To use a different
 name, set the `IMAGE_HOSTNAME` variable at build time (e.g. `make image IMAGE_HOSTNAME=mybox`
 will advertise as `mybox.local`).
 
+Use `IMAGE_HOSTNAME` to avoid mDNS collisions when a real Town OS instance is
+already running on the network, or when multiple VMs are being tested at the
+same time:
+
+```
+IMAGE_HOSTNAME=town-os-dev make clean && make qemu-fg
+```
+
+Each VM gets its own hostname and mDNS name (e.g. `town-os-dev.local`),
+preventing conflicts with production or other test instances.
+
 For mDNS to work from the host when using the default `virbr0` bridge (libvirt
 NAT), the host's avahi daemon must have mDNS reflection enabled. `make deps`
 configures this automatically by setting `enable-reflector=yes` in
@@ -65,7 +76,8 @@ Once the VM is running, use `make vm-ip` to resolve its IP address.
 | `serial`            | Attach to the QEMU serial console (Ctrl-] to disconnect)       |
 | `vm-ip`             | Resolve and print the VM's IP address                          |
 | `clean`             | Remove all image and VM disk files                             |
-| `deps`              | Install required build dependencies via pacman                  |
+| `deps`              | Install required build dependencies via pacman (Arch Linux)     |
+| `deps-debian`       | Install required host dependencies via apt (Debian/Ubuntu)      |
 | `cleanup-loopback`  | Kill processes on loopback mounts and detach all loops          |
 
 ## Tunable variables
@@ -207,3 +219,5 @@ The install script performs the following steps:
 | `KEEP_MOUNT`       | When non-empty, skip unmount and USB write; print mount path  |
 | `IMAGE_HOSTNAME`   | Set the system hostname and mDNS name (default: `town-os`, i.e. `town-os.local`) |
 | `LOCAL_DNS`        | Bypass rolodex DNS; `1` = build host's hostname, other = literal hostname |
+| `TTYFORCE_DEV`     | When non-empty, install ttyforce from git HEAD instead of crates.io |
+| `TTYFORCE_LATEST`  | When non-empty, install the latest ttyforce from crates.io (ignores version pin) |
