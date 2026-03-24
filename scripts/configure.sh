@@ -23,7 +23,7 @@ echo "${IMAGE_HOSTNAME:-town-os}" >/etc/hostname
 # Remove autodetect — it strips modules to only those found on the build host
 # (a loopback in a chroot), so USB/AHCI/SCSI drivers would be missing at boot
 sed -i 's/^HOOKS=.*/HOOKS=(base udev modconf kms keyboard keymap consolefont block filesystems fsck town-installer town-squashfs)/' /etc/mkinitcpio.conf
-sed -i 's/^MODULES=.*/MODULES=(loop overlay squashfs nf_tables ahci sd_mod virtio_blk virtio_scsi nvme usb_storage uas e1000 e1000e igb ixgbe i40e ice virtio_net r8169 tg3 bnxt_en mlx4_en mlx5_core)/' /etc/mkinitcpio.conf
+sed -i 's/^MODULES=.*/MODULES=(loop overlay squashfs nf_tables ahci sd_mod virtio_blk virtio_scsi nvme usb_storage uas e1000 e1000e igb ixgbe i40e ice virtio_net r8169 tg3 bnxt_en mlx4_en mlx5_core cfg80211 mac80211 iwlwifi iwlmvm ath9k ath10k_pci ath11k_pci brcmfmac mt76x2u rtw88_pci rtw89_pci)/' /etc/mkinitcpio.conf
 
 curl -sSL sh.rustup.rs >boot-rustup && chmod +x boot-rustup && ./boot-rustup -y && rm boot-rustup
 source $HOME/.cargo/env && cargo install --git https://gitea.com/town-os/control-plane charon && mv /root/.cargo/bin/charon /usr/bin

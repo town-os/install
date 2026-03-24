@@ -121,7 +121,7 @@ mount "$PART3" "$MOUNT_POINT"
 mkdir -p "$MOUNT_POINT/boot/efi"
 mount "$PART2" "$MOUNT_POINT/boot/efi"
 
-PACKAGES="base base-devel avahi clang linux618 podman efibootmgr grub openssh dhcpcd parted"
+PACKAGES="base base-devel avahi clang linux618 linux-firmware podman efibootmgr grub openssh dhcpcd parted wpa_supplicant iw wireless_tools"
 
 if [ "$STORAGE_BACKEND" = "zfs" ]
 then

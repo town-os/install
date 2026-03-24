@@ -4,8 +4,15 @@ build() {
     add_module btrfs
     add_binary /usr/bin/ttyforce
     add_binary setsid
+    add_binary wpa_supplicant
+    add_binary wpa_cli
     add_binary dhcpcd
     add_binary ip
+    add_binary iw
+    add_binary iwlist
+    add_binary rfkill
+    add_binary ping
+    add_binary pkill
     add_binary agetty
     add_binary parted
     add_binary partprobe
