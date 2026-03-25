@@ -40,12 +40,12 @@ rm -rf $HOME/.cargo/registry
 
 mkinitcpio -P
 
-# systemd unit enablement is handled via D-Bus in install.sh (Podman container phase)
+# systemd unit enablement is handled via D-Bus in make/install.sh (Podman container phase)
 
 sed -i 's/^#PermitRootLogin .*/PermitRootLogin yes/' /etc/ssh/sshd_config
 sed -i 's/^#PasswordAuthentication .*/PasswordAuthentication yes/' /etc/ssh/sshd_config
 mkdir -p /var/log/journal
-# Can't symlink during chroot (bind-mounted), so install.sh handles it after chroot exits
+# Can't symlink during chroot (bind-mounted), so make/install.sh handles it after chroot exits
 
 # Bind systemd-resolved stub listener to 127.0.0.53 only — keep 127.0.0.2 free for rolodex
 mkdir -p /etc/systemd/resolved.conf.d
@@ -65,7 +65,7 @@ NODISABLE
 
 if [ "$BACKEND" = "zfs" ]
 then
-  # zfs-mount.service enablement is handled via D-Bus in install.sh (Podman container phase)
+  # zfs-mount.service enablement is handled via D-Bus in make/install.sh (Podman container phase)
   echo DO_OVERLAY_MOUNTS=yes >> /etc/default/zfs
   echo ZPOOL_IMPORT_ALL_VISIBLE=yes >> /etc/default/zfs
 fi

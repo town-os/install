@@ -27,7 +27,7 @@ image:
 	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) ${PWD}/make/image.sh $(IMAGE_SIZE) $(IMAGE)
 
 compress-release:
-	sudo -E lbzip2 $(IMAGE)
+	sudo -E lbzip2 -f $(IMAGE)
 
 image-release: image compress-release
 

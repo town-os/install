@@ -15,7 +15,7 @@ make stop        # stop all VMs
 make clean       # remove all images and VM disks
 ```
 
-Requires root for image building (install.sh uses loopback mounts, chroot, pacstrap).
+Requires root for image building (make/install.sh uses loopback mounts, chroot, pacstrap).
 
 ### Arch Linux Setup
 
@@ -57,7 +57,7 @@ To build images on Debian/Ubuntu, use an Arch Linux container or build on an Arc
 ## Project Layout
 
 ```
-install.sh              # Main build script — partitions, pacstraps, installs GRUB
+make/install.sh         # Main build script — partitions, pacstraps, installs GRUB
 scripts/configure.sh    # Runs inside chroot — installs rust binaries, configures systemd
 town-os.yaml            # Build config (storage_backend, btrfs_raid_mode, vm_disk_size)
 make/                   # Helper scripts for each Makefile target
@@ -74,7 +74,7 @@ systemd/
 
 ## Image Build Flow
 
-1. `install.sh` creates a sparse raw image with GPT: BIOS boot (1 MiB), EFI (512 MiB), ext4 data (remainder)
+1. `make/install.sh` creates a sparse raw image with GPT: BIOS boot (1 MiB), EFI (512 MiB), ext4 data (remainder)
 2. `pacstrap` bootstraps Arch with base packages, podman, avahi, grub, btrfs-progs, openssh, dhcpcd, parted
 3. Initcpio hooks and systemd services are copied into the chroot
 4. `configure.sh` runs in chroot: installs rust, builds charon + ttyforce, runs mkinitcpio
@@ -115,11 +115,11 @@ All systemd operations MUST use D-Bus (`busctl`) instead of the `systemctl` CLI.
 - **Sledgehammer mode**: GRUB menu entry sets `town.sledgehammer` kernel param, which triggers full wipe of all non-boot disks.
 - **`/.town` directory** holds internal mounts that back the root overlay (squashfs at `/.town/sfs`, data partition at `/.town/data`, tmpfs overlay at `/.town/overlay`). The squashfs is also exposed at `/usb`. Do not modify these.
 - **`/boot`** is bind-mounted from the data partition so kernel/GRUB updates persist.
-- **Build cleanup**: `install.sh` uses a trap to clean up loopback devices and mounts on failure. Use `make cleanup-loopback` to manually clean stale loopback devices.
+- **Build cleanup**: `make/install.sh` uses a trap to clean up loopback devices and mounts on failure. Use `make cleanup-loopback` to manually clean stale loopback devices.
 - **Kernel modules in initrd**: Storage drivers (`ahci`, `sd_mod`, `virtio_blk`, `virtio_scsi`, `nvme`, `usb_storage`, `uas`), wired network drivers (`e1000`, `e1000e`, `igb`, `ixgbe`, `i40e`, `ice`, `virtio_net`, `r8169`, `tg3`, `bnxt_en`, `mlx4_en`, `mlx5_core`), and WiFi drivers (`cfg80211`, `mac80211`, `iwlwifi`, `iwlmvm`, `ath9k`, `ath10k_pci`, `ath11k_pci`, `brcmfmac`, `mt76x2u`, `rtw88_pci`, `rtw89_pci`) are explicitly included since `autodetect` is disabled.
 - **Initrd binaries**: `ttyforce`, `dhcpcd`, `ip`, `iw`, `iwlist`, `wpa_supplicant`, `rfkill`, `ping`, `pkill`, `setsid`, `agetty`, `parted`, `partprobe`, `udevadm`, `mkfs.btrfs`, `wipefs`, `btrfs`, plus standard mount/umount/mkdir/mountpoint. WiFi tools (`iw`, `iwlist`, `wpa_supplicant`, `rfkill`) are required for ttyforce's initrd WiFi provisioning — it scans with `iw`/`iwlist`, unblocks radios with `rfkill`, and authenticates with `wpa_supplicant`.
-- **`sudo -E`**: All `sudo` calls in make scripts and install.sh MUST use `-E` to preserve the environment.
-- **No host side effects**: Build and VM tasks (image, qemu, qemu-fg, run) MUST NOT install packages, modify host services, or touch the host's package manager. The `deps` target is manual-only and must never be a dependency of other targets. `pacstrap` inside `install.sh` uses the host's pacman database (unavoidable), but no other host state should be modified during builds.
+- **`sudo -E`**: All `sudo` calls in make scripts and make/install.sh MUST use `-E` to preserve the environment.
+- **No host side effects**: Build and VM tasks (image, qemu, qemu-fg, run) MUST NOT install packages, modify host services, or touch the host's package manager. The `deps` target is manual-only and must never be a dependency of other targets. `pacstrap` inside `make/install.sh` uses the host's pacman database (unavoidable), but no other host state should be modified during builds.
 
 ## Default Credentials
 
