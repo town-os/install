@@ -39,7 +39,7 @@ git push --force origin "${RELEASE_VERSION}"
 
 # Gitea API base — derive from git remote or allow override
 GITEA_URL="${GITEA_URL:-https://gitea.com}"
-GITEA_REPO="${GITEA_REPO:-town-os/install}"
+GITEA_REPO="${GITEA_REPO:-town-os/town-os}"
 API="${GITEA_URL}/api/v1/repos/${GITEA_REPO}"
 
 if [ -z "${GITEA_TOKEN:-}" ]; then
@@ -68,3 +68,32 @@ curl -sf -X POST "${API}/releases/${RELEASE_ID}/assets?name=$(basename "${IMAGE}
   --data-binary "@${IMAGE}.bz2"
 
 echo "Release ${RELEASE_VERSION} published successfully."
+
+# --- Update website download links ---
+WEBSITE_REPO="${WEBSITE_REPO:-https://github.com/town-os/town-os.github.io.git}"
+DOWNLOAD_URL="${GITEA_URL}/${GITEA_REPO}/releases/download/${RELEASE_VERSION}/$(basename "${IMAGE}.bz2")"
+RELEASE_PAGE_URL="${GITEA_URL}/${GITEA_REPO}/releases/tag/${RELEASE_VERSION}"
+
+echo "Updating website download links..."
+WEBSITE_DIR=$(mktemp -d)
+trap 'rm -rf "$WEBSITE_DIR"' EXIT
+
+git clone --depth 1 "$WEBSITE_REPO" "$WEBSITE_DIR"
+
+# Update install.sh IMAGE_URL
+sed -i "s|^IMAGE_URL=.*|IMAGE_URL=\"${DOWNLOAD_URL}\"|" "$WEBSITE_DIR/public/install.sh"
+
+# Update release link on index page
+sed -i "s|https://gitea.com/town-os/[^\"]*releases/tag/[^\"|]*|${RELEASE_PAGE_URL}|g" \
+  "$WEBSITE_DIR/src/pages/index.astro"
+
+cd "$WEBSITE_DIR"
+if git diff --quiet; then
+  echo "No website changes needed."
+else
+  git add -A
+  git commit -m "Update download links to ${RELEASE_VERSION}"
+  git push origin main
+  echo "Website updated."
+fi
+cd -
