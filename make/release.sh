@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ -z "${RELEASE_VERSION:-}" ]; then
-  echo "ERROR: RELEASE_VERSION is required. Usage: make release RELEASE_VERSION=v1.0.0" >&2
-  exit 1
-fi
+RELEASE_VERSION="${RELEASE_VERSION:?RELEASE_VERSION is required}"
 
 IMAGE="${IMAGE:?IMAGE is required}"
 

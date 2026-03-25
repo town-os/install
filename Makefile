@@ -1,4 +1,5 @@
-IMAGE            ?= town-os-$(shell date +%Y-%m-%d).img
+BUILD_DATE       := $(shell date +%Y-%m-%d)
+IMAGE            ?= town-os-$(BUILD_DATE).img
 IMAGE_SIZE       ?= 12G
 CONTROLLER_IMAGE ?= quay.io/town/town:rc.latest
 UI_IMAGE         ?= quay.io/town/ui:rc.latest
@@ -80,4 +81,4 @@ cleanup-loopback:
 	${PWD}/make/cleanup-loopback.sh
 
 release: image-release
-	RELEASE_VERSION=$(RELEASE_VERSION) IMAGE=$(IMAGE) ${PWD}/make/release.sh
+	RELEASE_VERSION=$(or $(RELEASE_VERSION),$(BUILD_DATE)-unstable) IMAGE=$(IMAGE) ${PWD}/make/release.sh
