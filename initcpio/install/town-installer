@@ -24,6 +24,7 @@ build() {
     add_binary mount
     add_binary mkdir
     add_binary btrfs
+    add_binary tr
     add_runscript
 }
 

@@ -201,7 +201,7 @@ podman exec town-build busctl call \
 
 podman exec town-build busctl call \
   org.freedesktop.systemd1 /org/freedesktop/systemd1 \
-  org.freedesktop.systemd1.Manager EnableUnitFiles "asbb" 9 \
+  org.freedesktop.systemd1.Manager EnableUnitFiles "asbb" 10 \
   "town-os-systemcontroller.service" \
   "town-os-sledgehammer.service" \
   "town-os-network-diag.timer" \
@@ -210,6 +210,15 @@ podman exec town-build busctl call \
   "systemd-networkd-wait-online.service" \
   "systemd-resolved.service" \
   "sshd.service" \
+  "town-os-getty@tty1.service" \
+  "town-os-serial-getty@ttyS0.service" \
+  false false
+
+# Mask default getty units so they don't conflict with ttyforce getty
+podman exec town-build busctl call \
+  org.freedesktop.systemd1 /org/freedesktop/systemd1 \
+  org.freedesktop.systemd1.Manager MaskUnitFiles "asbb" 2 \
+  "getty@tty1.service" \
   "serial-getty@ttyS0.service" \
   false false
 

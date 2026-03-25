@@ -1,0 +1,26 @@
+[Unit]
+Description=Town OS Getty on %I
+Documentation=man:agetty(8)
+After=systemd-user-sessions.service plymouth-quit-wait.service
+After=rc-local.service
+Before=getty.target
+IgnoreOnIsolate=yes
+ConditionPathExists=/dev/%I
+Conflicts=getty@%i.service
+
+[Service]
+ExecStart=-/sbin/agetty --autologin root --login-program /usr/lib/town-os/scripts/ttyforce-getty.sh -o '' --noclear %I $TERM
+Type=idle
+Restart=always
+RestartSec=0
+UtmpIdentifier=%I
+TTYPath=/dev/%I
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+StandardInput=tty
+StandardOutput=tty
+StandardError=tty
+
+[Install]
+WantedBy=getty.target

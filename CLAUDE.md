@@ -38,10 +38,10 @@ To build images on Debian/Ubuntu, use an Arch Linux container or build on an Arc
 ### Host Dependencies
 
 **Arch Linux** (`make deps`):
-`base-devel` `arch-install-scripts` `parted` `e2fsprogs` `dosfstools` `rsync` `psmisc` `lsof` `squashfs-tools` `libvirt` `dnsmasq` `avahi` `qemu-full` `socat` `lbzip2` `podman` `dbus`
+`base-devel` `arch-install-scripts` `parted` `e2fsprogs` `dosfstools` `rsync` `psmisc` `lsof` `squashfs-tools` `libvirt` `dnsmasq` `avahi` `nss-mdns` `qemu-full` `socat` `lbzip2` `podman` `dbus`
 
 **Debian/Ubuntu** (`make deps-debian`):
-`build-essential` `parted` `e2fsprogs` `dosfstools` `rsync` `psmisc` `lsof` `squashfs-tools` `libvirt-daemon-system` `libvirt-clients` `dnsmasq-base` `avahi-daemon` `qemu-system-x86` `qemu-utils` `socat` `lbzip2` `podman` `dbus` `util-linux`
+`build-essential` `parted` `e2fsprogs` `dosfstools` `rsync` `psmisc` `lsof` `squashfs-tools` `libvirt-daemon-system` `libvirt-clients` `dnsmasq-base` `avahi-daemon` `libnss-mdns` `qemu-system-x86` `qemu-utils` `socat` `lbzip2` `podman` `dbus` `util-linux`
 
 ## Key Variables
 
@@ -70,6 +70,8 @@ systemd/
   town-os-systemcontroller.service  # Podman-based system controller
   town-os-sledgehammer.service      # Erase permanent storage on demand
   town-os-network-diag.*            # Periodic network state logging
+  town-os-getty@.service            # ttyforce getty for virtual consoles
+  town-os-serial-getty@.service     # ttyforce getty for serial consoles
 ```
 
 ## Image Build Flow
@@ -94,7 +96,7 @@ systemd/
    - Runs `ttyforce initrd --etc-prefix /town-os/etc/overlays/root`
    - After ttyforce: re-mounts btrfs, creates overlay dirs, masks catch-all networkd config
 3. **town-squashfs hook**: loop-mounts `root.sfs`, creates tmpfs overlay, scans for btrfs and mounts `/town-os`, overlays `/etc` and `/var` with btrfs-backed upper dirs, switch_root
-4. systemd starts: systemcontroller (podman), avahi, networkd, sshd
+4. systemd starts: systemcontroller (podman), avahi, networkd, sshd, ttyforce getty (agetty on tty1/ttyS0 with ttyforce as login program — ttyforce manages /bin/login)
 
 ## systemd Operations
 

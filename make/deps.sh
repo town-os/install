@@ -8,7 +8,7 @@ fi
 case "${ID:-}" in
   arch|manjaro|endeavouros|garuda)
     sudo -E pacman -S --needed base-devel arch-install-scripts parted e2fsprogs \
-      dosfstools rsync psmisc lsof squashfs-tools libvirt dnsmasq avahi qemu-full \
+      dosfstools rsync psmisc lsof squashfs-tools libvirt dnsmasq avahi nss-mdns qemu-full \
       socat lbzip2 podman dbus
     ;;
   ubuntu|debian|pop|linuxmint)
@@ -16,7 +16,7 @@ case "${ID:-}" in
     sudo -E apt-get install -y \
       build-essential parted e2fsprogs dosfstools rsync psmisc lsof \
       squashfs-tools libvirt-daemon-system libvirt-clients dnsmasq-base \
-      avahi-daemon qemu-system-x86 qemu-utils socat lbzip2 podman \
+      avahi-daemon libnss-mdns qemu-system-x86 qemu-utils socat lbzip2 podman \
       dbus util-linux
     ;;
   *)
@@ -36,6 +36,11 @@ sudo -E virsh net-autostart default
 
 sudo -E sed -i 's/^#*enable-reflector=.*/enable-reflector=yes/' /etc/avahi/avahi-daemon.conf
 sudo -E sed -i 's/^#*allow-interfaces=.*/# allow-interfaces=/' /etc/avahi/avahi-daemon.conf
+
+# Ensure nsswitch.conf has mdns_minimal for .local resolution
+if ! grep -q 'mdns_minimal' /etc/nsswitch.conf; then
+  sudo -E sed -i 's/^hosts:.*/hosts: mymachines mdns_minimal [NOTFOUND=return] resolve [!UNAVAIL=return] files myhostname dns/' /etc/nsswitch.conf
+fi
 sudo -E busctl call org.freedesktop.systemd1 /org/freedesktop/systemd1 \
   org.freedesktop.systemd1.Manager EnableUnitFiles "asbb" 1 "avahi-daemon.service" false false
 sudo -E busctl call org.freedesktop.systemd1 /org/freedesktop/systemd1 \

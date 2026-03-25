@@ -9,6 +9,9 @@ FOREGROUND="${FOREGROUND:-0}"
 
 sudo -E ip link set "${VM_BRIDGE}" allmulticast on 2>/dev/null || true
 
+# Disable IGMP snooping so the bridge floods mDNS multicast to all ports
+sudo -E ip link set "${VM_BRIDGE}" type bridge mcast_snooping 0 2>/dev/null || true
+
 # Allow multicast (mDNS) through the bridge — br_netfilter drops it by default
 sudo -E sysctl -w net.bridge.bridge-nf-call-iptables=0 2>/dev/null || true
 sudo -E sysctl -w net.bridge.bridge-nf-call-ip6tables=0 2>/dev/null || true
