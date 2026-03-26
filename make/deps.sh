@@ -9,14 +9,14 @@ case "${ID:-}" in
   arch|manjaro|endeavouros|garuda)
     sudo -E pacman -S --needed base-devel arch-install-scripts parted e2fsprogs \
       dosfstools rsync psmisc lsof squashfs-tools libvirt dnsmasq avahi nss-mdns qemu-full \
-      socat lbzip2 podman dbus
+      socat lbzip2 pv podman dbus
     ;;
   ubuntu|debian|pop|linuxmint)
     sudo -E apt-get update
     sudo -E apt-get install -y \
       build-essential parted e2fsprogs dosfstools rsync psmisc lsof \
       squashfs-tools libvirt-daemon-system libvirt-clients dnsmasq-base \
-      avahi-daemon libnss-mdns qemu-system-x86 qemu-utils socat lbzip2 podman \
+      avahi-daemon libnss-mdns qemu-system-x86 qemu-utils socat lbzip2 pv podman \
       dbus util-linux
     ;;
   *)

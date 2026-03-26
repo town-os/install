@@ -15,7 +15,7 @@ LOCAL_DNS   ?=
 .PHONY: run run-release stop image image-release qemu qemu-fg \
         qemu-release virtualbox virtualbox-fg virtualbox-release \
         stop-qemu stop-virtualbox vm-ip serial clean cleanup-loopback \
-        deps deps-debian release
+        deps deps-debian release flash
 
 rebuild-qemu: stop clean image qemu
 
@@ -28,7 +28,7 @@ image:
 	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) ${PWD}/make/image.sh $(IMAGE_SIZE) $(IMAGE)
 
 compress-release:
-	sudo -E lbzip2 -f $(IMAGE)
+	sudo -E pv $(IMAGE) | lbzip2 > $(IMAGE).bz2 && rm -f $(IMAGE)
 
 image-release: image compress-release
 
@@ -79,6 +79,9 @@ deps-debian:
 
 cleanup-loopback:
 	${PWD}/make/cleanup-loopback.sh
+
+flash: $(IMAGE)
+	${PWD}/make/flash.sh $(IMAGE)
 
 release: image-release
 	RELEASE_VERSION=$(or $(RELEASE_VERSION),$(BUILD_DATE)-unstable) IMAGE=$(IMAGE) ${PWD}/make/release.sh

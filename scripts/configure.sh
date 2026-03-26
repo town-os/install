@@ -13,6 +13,9 @@ chown root:root /usr/lib/town-os/scripts/*.sh
 chmod +x /usr/lib/town-os/scripts/*.sh
 
 echo 'root:enjoytownos' | chpasswd
+echo '/usr/lib/town-os/scripts/ttyforce-status.sh' >> /etc/shells
+useradd -m -s /usr/lib/town-os/scripts/ttyforce-status.sh status
+echo 'status:enjoytownos' | chpasswd
 ln -sf /usr/share/zoneinfo/UTC /etc/localtime
 locale-gen
 echo LANG=en_US.UTF-8 >/etc/locale.conf

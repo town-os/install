@@ -9,7 +9,7 @@ sudo -E apt-get update
 sudo -E apt-get install -y \
   build-essential parted e2fsprogs dosfstools rsync psmisc lsof \
   squashfs-tools libvirt-daemon-system libvirt-clients dnsmasq-base \
-  avahi-daemon qemu-system-x86 qemu-utils socat lbzip2 podman \
+  avahi-daemon qemu-system-x86 qemu-utils socat lbzip2 pv podman \
   dbus util-linux
 
 sudo -E busctl call org.freedesktop.systemd1 /org/freedesktop/systemd1 \
