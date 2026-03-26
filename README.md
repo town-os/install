@@ -21,9 +21,9 @@ VM in the background. When the VM is ready its IP address is printed.
 
 ## Multicast DNS (town-os.local)
 
-The VM advertises itself as `town-os.local` via avahi/mDNS. To use a different
-name, set the `IMAGE_HOSTNAME` variable at build time (e.g. `make image IMAGE_HOSTNAME=mybox`
-will advertise as `mybox.local`).
+The VM advertises itself as `town-os.local` via systemd-resolved mDNS. To use a
+different name, set the `IMAGE_HOSTNAME` variable at build time (e.g.
+`make image IMAGE_HOSTNAME=mybox` will advertise as `mybox.local`).
 
 Use `IMAGE_HOSTNAME` to avoid mDNS collisions when a real Town OS instance is
 already running on the network, or when multiple VMs are being tested at the
@@ -37,16 +37,14 @@ Each VM gets its own hostname and mDNS name (e.g. `town-os-dev.local`),
 preventing conflicts with production or other test instances.
 
 For mDNS to work from the host when using the default `virbr0` bridge (libvirt
-NAT), the host's avahi daemon must have mDNS reflection enabled. `make deps`
-configures this automatically by setting `enable-reflector=yes` in
-`/etc/avahi/avahi-daemon.conf` and restarting the service.
+NAT), `make deps` enables mDNS in systemd-resolved and on the bridge interface.
 
 If you've already run `make deps` and `town-os.local` still doesn't resolve,
 verify manually:
 
 ```
-grep enable-reflector /etc/avahi/avahi-daemon.conf
-# should show: enable-reflector=yes
+resolvectl mdns virbr0
+# should show: yes
 ```
 
 Once the VM is running, use `make vm-ip` to resolve its IP address.
@@ -193,7 +191,7 @@ The install script performs the following steps:
    - **Partition 3** (1 GiB–end) — ext4 data partition (`TOWN_DATA`).
 
 3. **Bootstrap the root filesystem** — `pacstrap` installs a base Arch/Manjaro
-   system plus runtime dependencies (podman, avahi, GRUB, etc.). When `zfs` is
+   system plus runtime dependencies (podman, GRUB, etc.). When `zfs` is
    selected as the storage backend, `linux618-zfs` is included; for `btrfs`
    with `mdadm` raid mode, `mdadm` is included.
 
@@ -202,7 +200,7 @@ The install script performs the following steps:
    - Installs the Charon control-plane binary from source via Cargo.
    - Enables systemd services: storage provisioning, the system controller
      (container image set by `CONTROLLER_IMAGE`), the UI (container image set
-     by `UI_IMAGE`), avahi, networkd, and resolved.
+     by `UI_IMAGE`), networkd, and resolved (with mDNS).
    - Writes a DHCP network configuration for ethernet interfaces.
    - Sets the GRUB distributor to Town OS.
 

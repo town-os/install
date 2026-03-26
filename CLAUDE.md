@@ -38,10 +38,10 @@ To build images on Debian/Ubuntu, use an Arch Linux container or build on an Arc
 ### Host Dependencies
 
 **Arch Linux** (`make deps`):
-`base-devel` `arch-install-scripts` `parted` `e2fsprogs` `dosfstools` `rsync` `psmisc` `lsof` `squashfs-tools` `libvirt` `dnsmasq` `avahi` `nss-mdns` `qemu-full` `socat` `lbzip2` `pv` `podman` `dbus`
+`base-devel` `arch-install-scripts` `parted` `e2fsprogs` `dosfstools` `rsync` `psmisc` `lsof` `squashfs-tools` `libvirt` `dnsmasq` `qemu-full` `socat` `lbzip2` `pv` `podman` `dbus`
 
 **Debian/Ubuntu** (`make deps-debian`):
-`build-essential` `parted` `e2fsprogs` `dosfstools` `rsync` `psmisc` `lsof` `squashfs-tools` `libvirt-daemon-system` `libvirt-clients` `dnsmasq-base` `avahi-daemon` `libnss-mdns` `qemu-system-x86` `qemu-utils` `socat` `lbzip2` `pv` `podman` `dbus` `util-linux`
+`build-essential` `parted` `e2fsprogs` `dosfstools` `rsync` `psmisc` `lsof` `squashfs-tools` `libvirt-daemon-system` `libvirt-clients` `dnsmasq-base` `qemu-system-x86` `qemu-utils` `socat` `lbzip2` `pv` `podman` `dbus` `util-linux`
 
 ## Key Variables
 
@@ -77,7 +77,7 @@ systemd/
 ## Image Build Flow
 
 1. `make/install.sh` creates a sparse raw image with GPT: BIOS boot (1 MiB), EFI (64 MiB), ext4 data (remainder)
-2. `pacstrap` bootstraps Arch with base packages, podman, avahi, grub, btrfs-progs, openssh, dhcpcd, parted
+2. `pacstrap` bootstraps Arch with base packages, podman, grub, btrfs-progs, openssh, dhcpcd, parted
 3. Initcpio hooks and systemd services are copied into the chroot
 4. `configure.sh` runs in chroot: installs rust, builds charon + ttyforce, runs mkinitcpio, trims firmware, removes build deps
 5. systemd units are enabled via D-Bus in a Podman container (`--rootfs` + `--systemd=true --unit=basic.target`)
@@ -96,7 +96,7 @@ systemd/
    - Runs `ttyforce initrd --etc-prefix /town-os/etc/overlays/root`
    - After ttyforce: re-mounts btrfs, creates overlay dirs, masks catch-all networkd config
 3. **town-squashfs hook**: loop-mounts `root.sfs`, creates tmpfs overlay, scans for btrfs and mounts `/town-os`, overlays `/etc` and `/var` with btrfs-backed upper dirs, switch_root
-4. systemd starts: systemcontroller (podman), avahi, networkd, sshd, ttyforce getty (agetty on tty1/ttyS0 with ttyforce as login program — ttyforce manages /bin/login)
+4. systemd starts: systemcontroller (podman), networkd, resolved (mDNS), sshd, ttyforce getty (agetty on tty1/ttyS0 with ttyforce as login program — ttyforce manages /bin/login)
 
 ## systemd Operations
 

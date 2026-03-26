@@ -121,7 +121,7 @@ mount "$PART3" "$MOUNT_POINT"
 mkdir -p "$MOUNT_POINT/boot/efi"
 mount "$PART2" "$MOUNT_POINT/boot/efi"
 
-PACKAGES="base base-devel avahi clang linux618 linux-firmware podman efibootmgr grub openssh dhcpcd parted wpa_supplicant iw wireless_tools"
+PACKAGES="base base-devel clang linux618 linux-firmware podman efibootmgr grub openssh dhcpcd parted wpa_supplicant iw wireless_tools"
 
 if [ "$STORAGE_BACKEND" = "zfs" ]
 then
@@ -201,11 +201,10 @@ podman exec town-build busctl call \
 
 podman exec town-build busctl call \
   org.freedesktop.systemd1 /org/freedesktop/systemd1 \
-  org.freedesktop.systemd1.Manager EnableUnitFiles "asbb" 10 \
+  org.freedesktop.systemd1.Manager EnableUnitFiles "asbb" 9 \
   "town-os-systemcontroller.service" \
   "town-os-sledgehammer.service" \
   "town-os-network-diag.timer" \
-  "avahi-daemon.service" \
   "systemd-networkd.service" \
   "systemd-networkd-wait-online.service" \
   "systemd-resolved.service" \

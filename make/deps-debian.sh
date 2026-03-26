@@ -9,7 +9,7 @@ sudo -E apt-get update
 sudo -E apt-get install -y \
   build-essential parted e2fsprogs dosfstools rsync psmisc lsof \
   squashfs-tools libvirt-daemon-system libvirt-clients dnsmasq-base \
-  avahi-daemon qemu-system-x86 qemu-utils socat lbzip2 pv podman \
+  qemu-system-x86 qemu-utils socat lbzip2 pv podman \
   dbus util-linux
 
 sudo -E busctl call org.freedesktop.systemd1 /org/freedesktop/systemd1 \
@@ -20,10 +20,11 @@ sudo -E virsh net-define /usr/share/libvirt/networks/default.xml 2>/dev/null || 
 sudo -E virsh net-start default 2>/dev/null || true
 sudo -E virsh net-autostart default
 
-sudo -E busctl call org.freedesktop.systemd1 /org/freedesktop/systemd1 \
-  org.freedesktop.systemd1.Manager EnableUnitFiles "asbb" 1 "avahi-daemon.service" false false
-sudo -E busctl call org.freedesktop.systemd1 /org/freedesktop/systemd1 \
-  org.freedesktop.systemd1.Manager RestartUnit "ss" "avahi-daemon.service" "replace"
+# Enable mDNS in systemd-resolved for .local resolution across the VM bridge
+sudo -E mkdir -p /etc/systemd/resolved.conf.d
+printf '[Resolve]\nMulticastDNS=yes\n' | sudo -E tee /etc/systemd/resolved.conf.d/mdns.conf >/dev/null
+sudo -E resolvectl mdns virbr0 yes 2>/dev/null || true
+sudo -E systemctl reload systemd-resolved 2>/dev/null || true
 
 echo ""
 echo "Host dependencies installed."

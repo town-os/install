@@ -83,12 +83,14 @@ sed -i 's/^#PasswordAuthentication .*/PasswordAuthentication yes/' /etc/ssh/sshd
 mkdir -p /var/log/journal
 # Can't symlink during chroot (bind-mounted), so make/install.sh handles it after chroot exits
 
-# Bind systemd-resolved stub listener to 127.0.0.53 only — keep 127.0.0.2 free for rolodex
+# Configure systemd-resolved: keep 127.0.0.2 free for rolodex, enable mDNS
+# for .local hostname advertisement (replaces avahi-daemon)
 mkdir -p /etc/systemd/resolved.conf.d
 cat >/etc/systemd/resolved.conf.d/townos.conf <<RESOLVED
 [Resolve]
 DNSStubListener=yes
 DNSStubListenerExtra=
+MulticastDNS=yes
 RESOLVED
 
 # Prevent systemd-resolved from being stopped or disabled
