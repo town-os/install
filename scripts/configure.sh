@@ -72,7 +72,7 @@ rmdir /tmp/fw-keep
 # Remove only known build-only packages — do NOT use -s (cascade) on base-devel
 # because it can pull out grep, sed, gawk, findutils, etc. that the runtime needs
 rustup self uninstall -y
-pacman -Rdd --noconfirm gcc gcc-libs binutils autoconf automake bison flex \
+pacman -Rdd --noconfirm gcc binutils autoconf automake bison flex \
   libtool m4 make fakeroot debugedit groff texinfo patch pkgconf clang 2>/dev/null || true
 pacman -Scc --noconfirm
 
