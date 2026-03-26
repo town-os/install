@@ -106,6 +106,7 @@ All systemd operations MUST use D-Bus (`busctl`) instead of the `systemctl` CLI.
 
 - **Root is read-only squashfs + tmpfs overlay.** Changes are lost on reboot unless written to `/town-os` (persistent btrfs).
 - **ttyforce runs in the initrd** via `ttyforce initrd --etc-prefix /town-os/etc/overlays/root`. The `initrd` subcommand uses syscalls and dhcpcd directly (no systemd/dbus). `--etc-prefix` tells ttyforce to write network config (networkd units, resolv.conf, wpa_supplicant) directly into the btrfs overlay upper dir, so it persists across reboots. ttyforce handles disk partitioning, btrfs formatting, mounting/unmounting `/town-os`, and all networking.
+- **Serial console is off by default**: The default GRUB "Town OS" entry only sets `console=tty0` — the serial device (`ttyS0`) is not used at all. Serial is only active when the "Town OS (Serial Console)" entry is selected (`console=ttyS0,115200`). ttyforce must NOT unconditionally write to the serial console; it should only use the TTY it is given (via `--tty` or the kernel `console=` parameter).
 - **Persistent storage layout on `/town-os` (btrfs):**
   - `/town-os/etc/overlays/root` — overlay upper dir for `/etc`
   - `/town-os/etc/overlays/work` — overlay work dir for `/etc`
