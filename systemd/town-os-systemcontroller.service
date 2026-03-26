@@ -30,6 +30,8 @@ ExecStart=/usr/bin/podman run --pull=always \
     -btrfs /town-os \
     @PACKAGE_DNS@
 Restart=always
+RestartSec=5
+StartLimitIntervalSec=0
 
 [Install]
 WantedBy=default.target

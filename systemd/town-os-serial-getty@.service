@@ -9,7 +9,7 @@ ConditionPathExists=/dev/%I
 Conflicts=serial-getty@%i.service
 
 [Service]
-ExecStart=-/sbin/agetty --login-program /usr/lib/town-os/scripts/ttyforce-getty.sh -o '' --keep-baud 115200,57600,38400,9600 --noclear %I $TERM
+ExecStart=-/sbin/agetty --autologin root --login-program /usr/lib/town-os/scripts/ttyforce-getty.sh -o '' --keep-baud 115200,57600,38400,9600 --noclear %I $TERM
 Type=idle
 Restart=always
 RestartSec=0
