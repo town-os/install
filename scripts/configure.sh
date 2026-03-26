@@ -43,6 +43,39 @@ rm -rf $HOME/.cargo/registry
 
 mkinitcpio -P
 
+# --- Trim linux-firmware to router essentials ---
+# Keep only firmware for drivers in MODULES= plus basic VGA console.
+# mkinitcpio already bundled what it needs into the initrd above.
+FW=/usr/lib/firmware
+mkdir -p /tmp/fw-keep
+# WiFi firmware
+for d in ath9k_htc ath10k ath11k brcm mediatek rtw88 rtw89; do
+  [ -d "$FW/$d" ] && mv "$FW/$d" /tmp/fw-keep/
+done
+mv $FW/iwlwifi-* /tmp/fw-keep/ 2>/dev/null || true
+# Ethernet firmware
+for d in rtl_nic tigon bnxt intel i40e ice mellanox; do
+  [ -d "$FW/$d" ] && mv "$FW/$d" /tmp/fw-keep/
+done
+# VGA/GPU framebuffer firmware (basic console display)
+for d in amdgpu radeon i915 nvidia; do
+  [ -d "$FW/$d" ] && mv "$FW/$d" /tmp/fw-keep/
+done
+# Regulatory database (required for WiFi)
+mv $FW/regulatory.* /tmp/fw-keep/ 2>/dev/null || true
+# Remove everything else and restore keepers
+rm -rf $FW/*
+mv /tmp/fw-keep/* $FW/
+rmdir /tmp/fw-keep
+
+# --- Remove build-only dependencies ---
+# Remove only known build-only packages — do NOT use -s (cascade) on base-devel
+# because it can pull out grep, sed, gawk, findutils, etc. that the runtime needs
+rustup self uninstall -y
+pacman -Rdd --noconfirm gcc gcc-libs binutils autoconf automake bison flex \
+  libtool m4 make fakeroot debugedit groff texinfo patch pkgconf clang 2>/dev/null || true
+pacman -Scc --noconfirm
+
 # systemd unit enablement is handled via D-Bus in make/install.sh (Podman container phase)
 
 sed -i 's/^#PermitRootLogin .*/PermitRootLogin yes/' /etc/ssh/sshd_config

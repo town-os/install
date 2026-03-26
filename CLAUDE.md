@@ -38,10 +38,10 @@ To build images on Debian/Ubuntu, use an Arch Linux container or build on an Arc
 ### Host Dependencies
 
 **Arch Linux** (`make deps`):
-`base-devel` `arch-install-scripts` `parted` `e2fsprogs` `dosfstools` `rsync` `psmisc` `lsof` `squashfs-tools` `libvirt` `dnsmasq` `avahi` `nss-mdns` `qemu-full` `socat` `lbzip2` `podman` `dbus`
+`base-devel` `arch-install-scripts` `parted` `e2fsprogs` `dosfstools` `rsync` `psmisc` `lsof` `squashfs-tools` `libvirt` `dnsmasq` `avahi` `nss-mdns` `qemu-full` `socat` `lbzip2` `pv` `podman` `dbus`
 
 **Debian/Ubuntu** (`make deps-debian`):
-`build-essential` `parted` `e2fsprogs` `dosfstools` `rsync` `psmisc` `lsof` `squashfs-tools` `libvirt-daemon-system` `libvirt-clients` `dnsmasq-base` `avahi-daemon` `libnss-mdns` `qemu-system-x86` `qemu-utils` `socat` `lbzip2` `podman` `dbus` `util-linux`
+`build-essential` `parted` `e2fsprogs` `dosfstools` `rsync` `psmisc` `lsof` `squashfs-tools` `libvirt-daemon-system` `libvirt-clients` `dnsmasq-base` `avahi-daemon` `libnss-mdns` `qemu-system-x86` `qemu-utils` `socat` `lbzip2` `pv` `podman` `dbus` `util-linux`
 
 ## Key Variables
 
@@ -76,14 +76,14 @@ systemd/
 
 ## Image Build Flow
 
-1. `make/install.sh` creates a sparse raw image with GPT: BIOS boot (1 MiB), EFI (512 MiB), ext4 data (remainder)
+1. `make/install.sh` creates a sparse raw image with GPT: BIOS boot (1 MiB), EFI (64 MiB), ext4 data (remainder)
 2. `pacstrap` bootstraps Arch with base packages, podman, avahi, grub, btrfs-progs, openssh, dhcpcd, parted
 3. Initcpio hooks and systemd services are copied into the chroot
-4. `configure.sh` runs in chroot: installs rust, builds charon + ttyforce, runs mkinitcpio
+4. `configure.sh` runs in chroot: installs rust, builds charon + ttyforce, runs mkinitcpio, trims firmware, removes build deps
 5. systemd units are enabled via D-Bus in a Podman container (`--rootfs` + `--systemd=true --unit=basic.target`)
 6. GRUB is installed for both UEFI and BIOS boot
-7. Root filesystem is compressed to squashfs (`root.sfs`) on the data partition
-8. Image is shrunk to actual size (~2.5 GB)
+7. Root filesystem is compressed to squashfs with gzip (`root.sfs`) on the data partition
+8. Image is shrunk to actual size
 
 ## Boot Sequence
 
@@ -118,6 +118,7 @@ All systemd operations MUST use D-Bus (`busctl`) instead of the `systemctl` CLI.
 - **`/.town` directory** holds internal mounts that back the root overlay (squashfs at `/.town/sfs`, data partition at `/.town/data`, tmpfs overlay at `/.town/overlay`). The squashfs is also exposed at `/usb`. Do not modify these.
 - **`/boot`** is bind-mounted from the data partition so kernel/GRUB updates persist.
 - **Build cleanup**: `make/install.sh` uses a trap to clean up loopback devices and mounts on failure. Use `make cleanup-loopback` to manually clean stale loopback devices.
+- **Image size optimization**: The build strips `base-devel`, `clang`, and the Rust toolchain after compiling charon/ttyforce. `linux-firmware` is trimmed to only WiFi (`iwlwifi`, `ath9k`, `ath10k`, `ath11k`, `brcmfmac`, `mt76x2u`, `rtw88`, `rtw89`), Ethernet (`rtl_nic`, `tigon`, `bnxt`, `intel`, `i40e`, `ice`, `mellanox`), GPU framebuffer (`amdgpu`, `radeon`, `i915`, `nvidia`), and regulatory DB firmware. The package cache is cleaned after all installs. Squashfs uses gzip compression. The EFI partition is 64 MiB (minimal but safe for UEFI firmware compatibility). These optimizations target a final image under 4 GB for USB flash drives.
 - **Kernel modules in initrd**: Storage drivers (`ahci`, `sd_mod`, `virtio_blk`, `virtio_scsi`, `nvme`, `usb_storage`, `uas`), wired network drivers (`e1000`, `e1000e`, `igb`, `ixgbe`, `i40e`, `ice`, `virtio_net`, `r8169`, `tg3`, `bnxt_en`, `mlx4_en`, `mlx5_core`), and WiFi drivers (`cfg80211`, `mac80211`, `iwlwifi`, `iwlmvm`, `ath9k`, `ath10k_pci`, `ath11k_pci`, `brcmfmac`, `mt76x2u`, `rtw88_pci`, `rtw89_pci`) are explicitly included since `autodetect` is disabled.
 - **Initrd binaries**: `ttyforce`, `dhcpcd`, `ip`, `iw`, `iwlist`, `wpa_supplicant`, `rfkill`, `ping`, `pkill`, `setsid`, `agetty`, `parted`, `partprobe`, `udevadm`, `mkfs.btrfs`, `wipefs`, `btrfs`, plus standard mount/umount/mkdir/mountpoint. WiFi tools (`iw`, `iwlist`, `wpa_supplicant`, `rfkill`) are required for ttyforce's initrd WiFi provisioning — it scans with `iw`/`iwlist`, unblocks radios with `rfkill`, and authenticates with `wpa_supplicant`.
 - **`sudo -E`**: All `sudo` calls in make scripts and make/install.sh MUST use `-E` to preserve the environment.

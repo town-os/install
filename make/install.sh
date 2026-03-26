@@ -91,12 +91,12 @@ parted -s "$DEVICE" set 1 bios_grub on
 
 # Part2: EFI System Partition
 print_info "Creating EFI System Partition..."
-parted -s "$DEVICE" mkpart ESP fat32 2MiB 514MiB
+parted -s "$DEVICE" mkpart ESP fat32 2MiB 66MiB
 parted -s "$DEVICE" set 2 esp on
 
 # Part3: Data partition (holds /boot + root.sfs, >= 10GB)
 print_info "Creating data partition (>= 10GB)..."
-parted -s "$DEVICE" mkpart primary ext4 514MiB 100%
+parted -s "$DEVICE" mkpart primary ext4 66MiB 100%
 
 # Wait for kernel to update partition table
 sleep 2
@@ -295,7 +295,7 @@ print_info "Building squashfs root image..."
 umount "$MOUNT_POINT/boot/efi"
 
 # Create squashfs from the rootfs, excluding /boot (it stays on Part3 for GRUB)
-mksquashfs "$MOUNT_POINT" /tmp/town-root.sfs -comp zstd -noappend -e boot
+mksquashfs "$MOUNT_POINT" /tmp/town-root.sfs -comp gzip -noappend -e boot
 
 # Remove everything from Part3 except /boot
 find "$MOUNT_POINT" -mindepth 1 -maxdepth 1 ! -name boot -exec rm -rf {} +
