@@ -32,8 +32,11 @@ cleanup_mount() {
   cleanup_build_container
 
   if [ -d "$MOUNT_POINT" ]; then
-    # Unmount all submounts (boot/efi, etc.) then the main mount
-    fuser -cfk "$MOUNT_POINT" 2>/dev/null || :
+    # Only kill processes on the mount if something is actually mounted there;
+    # otherwise fuser -c targets the parent filesystem (root!) and kills the desktop
+    if mountpoint -q "$MOUNT_POINT"; then
+      fuser -mk "$MOUNT_POINT" 2>/dev/null || :
+    fi
     umount -Rf "$MOUNT_POINT" 2>/dev/null || umount -Rl "$MOUNT_POINT" 2>/dev/null || :
     rm -rf "$MOUNT_POINT"
   fi
