@@ -36,6 +36,9 @@ if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
   exit 1
 fi
 
-echo "Writing $IMAGE to $USB_DEV ..."
-pv < "$IMAGE" | sudo -E dd if=/dev/stdin of="$USB_DEV" bs=4M conv=fsync iflag=fullblock
+sudo -E true
+echo "Writing $IMAGE to $USB_DEV ..." >&2
+pv < "$IMAGE" | sudo -E dd if=/dev/stdin of="$USB_DEV" bs=4M iflag=fullblock oflag=direct
+echo "Syncing..." >&2
+sudo -E sync
 echo "Done. You can safely remove the USB drive."
