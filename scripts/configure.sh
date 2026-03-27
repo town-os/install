@@ -16,6 +16,14 @@ echo 'root:enjoytownos' | chpasswd
 echo '/usr/lib/town-os/scripts/ttyforce-status.sh' >> /etc/shells
 useradd -m -s /usr/lib/town-os/scripts/ttyforce-status.sh status
 echo 'status:enjoytownos' | chpasswd
+
+# SSH authorized_keys symlinks → persistent btrfs storage
+mkdir -p /root/.ssh
+ln -sf /town-os/ssh/authorized_keys/root /root/.ssh/authorized_keys
+mkdir -p /home/status/.ssh
+ln -sf /town-os/ssh/authorized_keys/status /home/status/.ssh/authorized_keys
+chown -R status:status /home/status/.ssh
+
 ln -sf /usr/share/zoneinfo/UTC /etc/localtime
 locale-gen
 echo LANG=en_US.UTF-8 >/etc/locale.conf
@@ -81,7 +89,7 @@ sed -i \
 # Disable password auth per-user when their authorized_keys exists
 cat >>/etc/ssh/sshd_config <<'SSHD'
 
-Match all exec "test -s /town-os/ssh/authorized_keys/%u"
+Match exec "test -s /town-os/ssh/authorized_keys/%u"
     PasswordAuthentication no
 SSHD
 mkdir -p /var/log/journal
