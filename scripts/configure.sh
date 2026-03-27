@@ -73,8 +73,17 @@ pacman -Scc --noconfirm
 
 # systemd unit enablement is handled via D-Bus in make/install.sh (Podman container phase)
 
-sed -i 's/^#PermitRootLogin .*/PermitRootLogin yes/' /etc/ssh/sshd_config
-sed -i 's/^#PasswordAuthentication .*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+sed -i \
+  -e 's/^#PermitRootLogin .*/PermitRootLogin yes/' \
+  -e 's/^#PasswordAuthentication .*/PasswordAuthentication yes/' \
+  /etc/ssh/sshd_config
+
+# Disable password auth per-user when their authorized_keys exists
+cat >>/etc/ssh/sshd_config <<'SSHD'
+
+Match all exec "test -s %h/.ssh/authorized_keys"
+    PasswordAuthentication no
+SSHD
 mkdir -p /var/log/journal
 # Can't symlink during chroot (bind-mounted), so make/install.sh handles it after chroot exits
 
