@@ -81,7 +81,7 @@ sed -i \
 # Disable password auth per-user when their authorized_keys exists
 cat >>/etc/ssh/sshd_config <<'SSHD'
 
-Match all exec "test -s %h/.ssh/authorized_keys"
+Match all exec "test -s /town-os/ssh/authorized_keys/%u"
     PasswordAuthentication no
 SSHD
 mkdir -p /var/log/journal

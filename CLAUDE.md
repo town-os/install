@@ -125,6 +125,9 @@ All systemd operations MUST use D-Bus (`busctl`) instead of the `systemctl` CLI.
 - **Kernel modules in initrd**: Storage drivers (`ahci`, `sd_mod`, `virtio_blk`, `virtio_scsi`, `nvme`, `usb_storage`, `uas`), wired network drivers (`e1000`, `e1000e`, `igb`, `ixgbe`, `i40e`, `ice`, `virtio_net`, `r8169`, `tg3`, `bnxt_en`, `mlx4_en`, `mlx5_core`), and WiFi drivers (`cfg80211`, `mac80211`, `iwlwifi`, `iwlmvm`, `ath9k`, `ath10k_pci`, `ath11k_pci`, `brcmfmac`, `mt76x2u`, `rtw88_pci`, `rtw89_pci`) are explicitly included since `autodetect` is disabled.
 - **Initrd binaries**: `ttyforce`, `dhcpcd`, `ip`, `iw`, `iwlist`, `wpa_supplicant`, `rfkill`, `ping`, `pkill`, `setsid`, `agetty`, `parted`, `partprobe`, `udevadm`, `mkfs.btrfs`, `wipefs`, `btrfs`, plus standard mount/umount/mkdir/mountpoint. WiFi tools (`iw`, `iwlist`, `wpa_supplicant`, `rfkill`) are required for ttyforce's initrd WiFi provisioning — it scans with `iw`/`iwlist`, unblocks radios with `rfkill`, and authenticates with `wpa_supplicant`.
 - **`sudo -E`**: All `sudo` calls in make scripts and make/install.sh MUST use `-E` to preserve the environment.
+- **SSH authorized_keys persistence**: SSH public keys are stored at `/town-os/ssh/authorized_keys/{username}` on the persistent btrfs partition. User home directories have symlinks (`~/.ssh/authorized_keys` → `/town-os/ssh/authorized_keys/{username}`) baked into the squashfs so they survive reboots. ttyforce manages key provisioning in both initrd and getty modes. Password auth is automatically disabled per-user (via sshd `Match exec`) when `/town-os/ssh/authorized_keys/%u` exists and is non-empty — this checks the btrfs target directly, not the symlink, so dangling symlinks in the squashfs don't trigger password disable.
+- **DNS bootstrap**: systemd-resolved is configured with `DNS=1.1.1.1 8.8.8.8` and `FallbackDNS=1.1.1.1 8.8.8.8` so DNS works immediately at boot. The systemcontroller restores `/etc/resolv.conf` to the resolved stub (`ExecStartPre`) before pulling container images, and again on stop (`ExecStopPost`). Rolodex overwrites resolv.conf once running; on next boot the cycle repeats.
+- **`StartLimitIntervalSec` belongs in `[Unit]`**: systemd silently ignores this directive if placed in `[Service]`. Always put it in `[Unit]`.
 - **Service restart resilience**: Systemd services that depend on network (e.g. systemcontroller pulling container images) must use `StartLimitIntervalSec=0` to disable the start rate limit, and a reasonable `RestartSec` (e.g. 5s) to avoid spamming. Without this, systemd's default rate limit (5 starts in 10s) permanently stops restarting the service if the network isn't ready yet (e.g. DNS unavailable before rolodex is running).
 - **No host side effects**: Build and VM tasks (image, qemu, qemu-fg, run) MUST NOT install packages, modify host services, or touch the host's package manager. The `deps` target is manual-only and must never be a dependency of other targets. `pacstrap` inside `make/install.sh` uses the host's pacman database (unavoidable), but no other host state should be modified during builds.
 
@@ -132,7 +135,7 @@ All systemd operations MUST use D-Bus (`busctl`) instead of the `systemctl` CLI.
 
 - **User:** root
 - **Password:** enjoytownos
-- **SSH:** enabled with password auth
+- **SSH:** enabled with password auth (disabled per-user when authorized_keys has keys)
 
 ## Storage Config (town-os.yaml)
 
