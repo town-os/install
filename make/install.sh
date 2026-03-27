@@ -72,17 +72,17 @@ print_error() {
 if [ -f "$IMAGE" ]
 then
   eject_loopback
-  rm -f $IMAGE
+  rm -f "$IMAGE"
 fi
 
 MOUNT_POINT=$(mktemp -d)
 
 trap 'cleanup_mount; eject_loopback' EXIT
 
-truncate -s $IMAGE_SIZE $IMAGE
+truncate -s "$IMAGE_SIZE" "$IMAGE"
 
-losetup -f --partscan $IMAGE
-DEVICE=$(losetup -j $IMAGE | awk -F: '{ print $1 }' | head -1)
+losetup -f --partscan "$IMAGE"
+DEVICE=$(losetup -j "$IMAGE" | awk -F: '{ print $1 }' | head -1)
 
 print_info "Creating GPT partition table..."
 parted -s "$DEVICE" mklabel gpt
@@ -102,9 +102,11 @@ print_info "Creating data partition (>= 10GB)..."
 parted -s "$DEVICE" mkpart primary ext4 66MiB 100%
 
 # Wait for kernel to update partition table
-sleep 2
 partprobe "$DEVICE"
-sleep 2
+for i in $(seq 1 20); do
+  [ -b "${DEVICE}p3" ] && break
+  sleep 0.2
+done
 
 PART1="${DEVICE}p1"
 PART2="${DEVICE}p2"
@@ -204,7 +206,8 @@ podman exec town-build busctl call \
 
 podman exec town-build busctl call \
   org.freedesktop.systemd1 /org/freedesktop/systemd1 \
-  org.freedesktop.systemd1.Manager EnableUnitFiles "asbb" 9 \
+  org.freedesktop.systemd1.Manager EnableUnitFiles "asbb" 10 \
+  "town-os-overlays.service" \
   "town-os-systemcontroller.service" \
   "town-os-sledgehammer.service" \
   "town-os-network-diag.timer" \
@@ -297,7 +300,7 @@ print_info "Building squashfs root image..."
 umount "$MOUNT_POINT/boot/efi"
 
 # Create squashfs from the rootfs, excluding /boot (it stays on Part3 for GRUB)
-mksquashfs "$MOUNT_POINT" /tmp/town-root.sfs -comp gzip -noappend -e boot
+mksquashfs "$MOUNT_POINT" /tmp/town-root.sfs -comp zstd -noappend -e boot
 
 # Remove everything from Part3 except /boot
 find "$MOUNT_POINT" -mindepth 1 -maxdepth 1 ! -name boot -exec rm -rf {} +
@@ -318,8 +321,7 @@ e2fsck -fy "$PART3" || [ $? -le 1 ]
 resize2fs -M "$PART3"
 
 # Calculate the new filesystem size in bytes
-BLOCK_COUNT=$(dumpe2fs -h "$PART3" 2>/dev/null | awk '/^Block count:/{print $3}')
-BLOCK_SIZE=$(dumpe2fs -h "$PART3" 2>/dev/null | awk '/^Block size:/{print $3}')
+eval $(dumpe2fs -h "$PART3" 2>/dev/null | awk '/^Block count:/{printf "BLOCK_COUNT=%s ",$3} /^Block size:/{printf "BLOCK_SIZE=%s",$3}')
 FS_BYTES=$((BLOCK_COUNT * BLOCK_SIZE))
 
 # Get partition 3 start offset in bytes

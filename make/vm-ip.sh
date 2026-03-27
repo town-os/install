@@ -6,8 +6,9 @@ IMAGE="${IMAGE:-image.raw}"
 
 found=0
 
-if sudo -E virsh list --name 2>/dev/null | grep -q .; then
-  for vm in $(sudo -E virsh list --name 2>/dev/null); do
+VMS=$(sudo -E virsh list --name 2>/dev/null || true)
+if echo "$VMS" | grep -q .; then
+  for vm in $VMS; do
     ip=$(sudo -E virsh domifaddr "${vm}" 2>/dev/null \
       | awk '/ipv4/ { split($4,a,"/"); print a[1] }')
     if [ -n "${ip}" ]; then

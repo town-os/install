@@ -63,17 +63,18 @@ if [ "${FOREGROUND}" != "1" ]; then
   echo "Serial console: socat - UNIX-CONNECT:/tmp/town-os-serial.sock"
 
   echo "Waiting for VM network (up to 120s)..."
-  TIMEOUT=120
-  ELAPSED=0
+  DEADLINE=$((SECONDS + 120))
+  DELAY=1
   IP=""
-  while [ "${ELAPSED}" -lt "${TIMEOUT}" ]; do
-    sleep 5
-    ELAPSED=$((ELAPSED + 5))
+  while [ "${SECONDS}" -lt "${DEADLINE}" ]; do
+    sleep "${DELAY}"
     IP=$(VM_NAME="${VM_NAME:-town-os}" IMAGE="${IMAGE}" "$(dirname "$0")/vm-ip.sh" 2>/dev/null) || true
     if [ -n "${IP}" ]; then
       echo "${IP}"
       exit 0
     fi
+    # Exponential backoff: 1 → 2 → 4 → 5 (cap)
+    DELAY=$(( DELAY * 2 > 5 ? 5 : DELAY * 2 ))
   done
   echo "Timed out waiting for VM network after ${TIMEOUT}s"
   echo "Use 'make vm-ip' to check later"

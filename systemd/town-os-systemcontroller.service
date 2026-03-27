@@ -4,9 +4,11 @@ Description=Town OS System Controller
 DefaultDependencies=yes
 Requires=network-online.target
 After=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=exec
+ExecStartPre=/bin/ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
 ExecStartPre=/usr/bin/mkdir -p /town-os/data/db /town-os/data/repos
 ExecStartPre=-/usr/bin/podman rm -f systemcontroller
 ExecStart=/usr/bin/podman run --pull=always \
@@ -29,9 +31,9 @@ ExecStart=/usr/bin/podman run --pull=always \
     -db /town-os/data/db/system.db \
     -btrfs /town-os \
     @PACKAGE_DNS@
+ExecStopPost=/bin/ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
 Restart=always
 RestartSec=5
-StartLimitIntervalSec=0
 
 [Install]
 WantedBy=default.target

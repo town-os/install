@@ -25,8 +25,10 @@ echo "${IMAGE_HOSTNAME:-town-os}" >/etc/hostname
 # Configure mkinitcpio for squashfs boot
 # Remove autodetect — it strips modules to only those found on the build host
 # (a loopback in a chroot), so USB/AHCI/SCSI drivers would be missing at boot
-sed -i 's/^HOOKS=.*/HOOKS=(base udev modconf kms keyboard keymap consolefont block filesystems fsck town-installer town-squashfs)/' /etc/mkinitcpio.conf
-sed -i 's/^MODULES=.*/MODULES=(loop overlay squashfs nf_tables ahci sd_mod virtio_blk virtio_scsi nvme usb_storage uas e1000 e1000e igb ixgbe i40e ice virtio_net r8169 tg3 bnxt_en mlx4_en mlx5_core cfg80211 mac80211 iwlwifi iwlmvm ath9k ath10k_pci ath11k_pci brcmfmac mt76x2u rtw88_pci rtw89_pci)/' /etc/mkinitcpio.conf
+sed -i \
+  -e 's/^HOOKS=.*/HOOKS=(base udev modconf kms keyboard keymap consolefont block filesystems fsck town-installer town-squashfs)/' \
+  -e 's/^MODULES=.*/MODULES=(loop overlay squashfs nf_tables ahci sd_mod virtio_blk virtio_scsi nvme usb_storage uas e1000 e1000e igb ixgbe i40e ice virtio_net r8169 tg3 bnxt_en mlx4_en mlx5_core cfg80211 mac80211 iwlwifi iwlmvm ath9k ath10k_pci ath11k_pci brcmfmac mt76x2u rtw88_pci rtw89_pci)/' \
+  /etc/mkinitcpio.conf
 
 curl -sSL sh.rustup.rs >boot-rustup && chmod +x boot-rustup && ./boot-rustup -y && rm boot-rustup
 source $HOME/.cargo/env && cargo install --git https://gitea.com/town-os/control-plane charon && mv /root/.cargo/bin/charon /usr/bin
@@ -48,20 +50,13 @@ mkinitcpio -P
 # mkinitcpio already bundled what it needs into the initrd above.
 FW=/usr/lib/firmware
 mkdir -p /tmp/fw-keep
-# WiFi firmware
-for d in ath9k_htc ath10k ath11k brcm mediatek rtw88 rtw89; do
+# WiFi, Ethernet, and GPU framebuffer firmware
+for d in ath9k_htc ath10k ath11k brcm mediatek rtw88 rtw89 \
+         rtl_nic tigon bnxt intel i40e ice mellanox \
+         amdgpu radeon i915 nvidia; do
   [ -d "$FW/$d" ] && mv "$FW/$d" /tmp/fw-keep/
 done
 mv $FW/iwlwifi-* /tmp/fw-keep/ 2>/dev/null || true
-# Ethernet firmware
-for d in rtl_nic tigon bnxt intel i40e ice mellanox; do
-  [ -d "$FW/$d" ] && mv "$FW/$d" /tmp/fw-keep/
-done
-# VGA/GPU framebuffer firmware (basic console display)
-for d in amdgpu radeon i915 nvidia; do
-  [ -d "$FW/$d" ] && mv "$FW/$d" /tmp/fw-keep/
-done
-# Regulatory database (required for WiFi)
 mv $FW/regulatory.* /tmp/fw-keep/ 2>/dev/null || true
 # Remove everything else and restore keepers
 rm -rf $FW/*
@@ -88,6 +83,8 @@ mkdir -p /var/log/journal
 mkdir -p /etc/systemd/resolved.conf.d
 cat >/etc/systemd/resolved.conf.d/townos.conf <<RESOLVED
 [Resolve]
+DNS=1.1.1.1 8.8.8.8
+FallbackDNS=1.1.1.1 8.8.8.8
 DNSStubListener=yes
 DNSStubListenerExtra=
 MulticastDNS=yes

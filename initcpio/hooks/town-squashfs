@@ -78,20 +78,8 @@ town_squashfs_mount() {
         mkdir -p "$newroot/town-os"
         mount --move /town-os "$newroot/town-os"
 
-        # Re-mount /etc with persistent btrfs-backed upper
-        # Use post-pivot_root paths (/.town/sfs/...) not initrd paths ($newroot/.town/sfs/...)
-        # so the overlay lowerdir survives switch_root without stale dentry references
-        if [ -d "$newroot/town-os/etc/overlays/root" ]; then
-            mount -t overlay overlay \
-                -o "lowerdir=/.town/sfs/etc,upperdir=/town-os/etc/overlays/root,workdir=/town-os/etc/overlays/work" \
-                "$newroot/etc"
-        fi
-
-        # Re-mount /var with persistent btrfs-backed upper
-        if [ -d "$newroot/town-os/var/overlays/root" ]; then
-            mount -t overlay overlay \
-                -o "lowerdir=/.town/sfs/var,upperdir=/town-os/var/overlays/root,workdir=/town-os/var/overlays/work" \
-                "$newroot/var"
-        fi
+        # /etc and /var overlays are mounted by town-os-overlays.service after
+        # switch_root, using correct post-pivot paths. Mounting here would use
+        # $newroot/... paths that become stale dentry references after pivot_root.
     fi
 }

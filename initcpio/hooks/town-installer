@@ -44,7 +44,7 @@ run_hook() {
     # The last console= parameter is the primary console (/dev/console).
     export TERM=linux
     TTY_ARGS=""
-    last_console=$(cat /proc/cmdline | tr ' ' '\n' | grep '^console=' | tail -1 | sed 's/^console=//' | sed 's/,.*//')
+    last_console=$(awk 'BEGIN{RS=" "} /^console=/{c=$0} END{sub(/^console=/,"",c); sub(/,.*/,"",c); print c}' /proc/cmdline)
     if [ -n "$last_console" ] && [ -e "/dev/$last_console" ]; then
         TTY_ARGS="--tty /dev/$last_console"
     fi

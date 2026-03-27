@@ -1,0 +1,15 @@
+[Unit]
+Description=Mount persistent etc/var overlays from btrfs
+DefaultDependencies=no
+ConditionDirectoryNotEmpty=/town-os/etc/overlays/root
+After=local-fs-pre.target
+Before=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/mount -t overlay overlay -o lowerdir=/.town/sfs/etc,upperdir=/town-os/etc/overlays/root,workdir=/town-os/etc/overlays/work /etc
+ExecStart=/bin/mount -t overlay overlay -o lowerdir=/.town/sfs/var,upperdir=/town-os/var/overlays/root,workdir=/town-os/var/overlays/work /var
+
+[Install]
+WantedBy=local-fs.target
