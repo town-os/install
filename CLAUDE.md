@@ -12,7 +12,8 @@ make             # build image and launch VM
 make qemu-fg     # build and launch QEMU with serial console attached
 make serial      # attach to running QEMU serial console (Ctrl-] to disconnect)
 make stop        # stop all VMs
-make clean       # remove all images and VM disks
+make clean        # remove current image and VM disks
+make clean-images # remove all built images
 ```
 
 Requires root for image building (make/install.sh uses loopback mounts, chroot, pacstrap).

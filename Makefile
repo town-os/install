@@ -14,8 +14,8 @@ LOCAL_DNS   ?=
 
 .PHONY: run run-release stop image image-release qemu qemu-fg \
         qemu-release virtualbox virtualbox-fg virtualbox-release \
-        stop-qemu stop-virtualbox vm-ip serial clean cleanup-loopback \
-        deps deps-debian release flash
+        stop-qemu stop-virtualbox vm-ip serial clean clean-images \
+        cleanup-loopback deps deps-debian release flash
 
 rebuild-qemu: stop clean image qemu
 
@@ -76,6 +76,9 @@ deps:
 
 deps-debian:
 	${PWD}/make/deps-debian.sh
+
+clean-images:
+	rm -f town-os-*.img town-os-*.img.bz2 image.raw
 
 cleanup-loopback:
 	${PWD}/make/cleanup-loopback.sh
