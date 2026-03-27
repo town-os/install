@@ -79,16 +79,18 @@ town_squashfs_mount() {
         mount --move /town-os "$newroot/town-os"
 
         # Re-mount /etc with persistent btrfs-backed upper
+        # Use post-pivot_root paths (/.town/sfs/...) not initrd paths ($newroot/.town/sfs/...)
+        # so the overlay lowerdir survives switch_root without stale dentry references
         if [ -d "$newroot/town-os/etc/overlays/root" ]; then
             mount -t overlay overlay \
-                -o "lowerdir=$newroot/.town/sfs/etc,upperdir=$newroot/town-os/etc/overlays/root,workdir=$newroot/town-os/etc/overlays/work" \
+                -o "lowerdir=/.town/sfs/etc,upperdir=/town-os/etc/overlays/root,workdir=/town-os/etc/overlays/work" \
                 "$newroot/etc"
         fi
 
         # Re-mount /var with persistent btrfs-backed upper
         if [ -d "$newroot/town-os/var/overlays/root" ]; then
             mount -t overlay overlay \
-                -o "lowerdir=$newroot/.town/sfs/var,upperdir=$newroot/town-os/var/overlays/root,workdir=$newroot/town-os/var/overlays/work" \
+                -o "lowerdir=/.town/sfs/var,upperdir=/town-os/var/overlays/root,workdir=/town-os/var/overlays/work" \
                 "$newroot/var"
         fi
     fi
