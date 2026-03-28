@@ -80,11 +80,6 @@ sed -i \
   -e 's/^#\?AuthorizedKeysFile .*/AuthorizedKeysFile .ssh\/authorized_keys \/town-os\/ssh\/authorized_keys\/%u/' \
   /etc/ssh/sshd_config
 
-# Ensure sshd includes drop-in configs (ssh-setup.sh writes town-os.conf at boot)
-mkdir -p /etc/ssh/sshd_config.d
-grep -q 'Include /etc/ssh/sshd_config.d' /etc/ssh/sshd_config || \
-  sed -i '1i Include /etc/ssh/sshd_config.d/*.conf' /etc/ssh/sshd_config
-
 mkdir -p /var/log/journal
 # Can't symlink during chroot (bind-mounted), so make/install.sh handles it after chroot exits
 
