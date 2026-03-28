@@ -9,6 +9,7 @@ Before=local-fs.target
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/bin/mount -t overlay overlay -o lowerdir=/.town/sfs/etc,upperdir=/town-os/etc/overlays/root,workdir=/town-os/etc/overlays/work /etc
+ExecStart=/bin/sh -c 'if ls /town-os/ssh/authorized_keys/* >/dev/null 2>&1; then sed -i -e "s|^#\\?AuthorizedKeysFile[[:space:]].*|AuthorizedKeysFile /town-os/ssh/authorized_keys/%%u|" -e "s|^#\\?PasswordAuthentication.*|PasswordAuthentication no|" /etc/ssh/sshd_config; fi'
 
 [Install]
 WantedBy=local-fs.target

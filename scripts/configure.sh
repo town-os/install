@@ -77,7 +77,6 @@ pacman -Scc --noconfirm
 sed -i \
   -e 's/^#PermitRootLogin .*/PermitRootLogin yes/' \
   -e 's/^#PasswordAuthentication .*/PasswordAuthentication yes/' \
-  -e 's/^#\?AuthorizedKeysFile[[:space:]].*/AuthorizedKeysFile \/town-os\/ssh\/authorized_keys\/%u/' \
   /etc/ssh/sshd_config
 
 mkdir -p /var/log/journal
