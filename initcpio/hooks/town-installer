@@ -29,7 +29,10 @@ mount_town_os() {
 prepare_networking() {
     # Create directories dhcpcd needs — ttyforce --initrd handles the rest
     mkdir -p /var/db/dhcpcd /var/run/dhcpcd /etc /etc/systemd/network
-    : > /etc/resolv.conf
+    cat > /etc/resolv.conf <<RESOLV
+nameserver 1.1.1.1
+nameserver 8.8.8.8
+RESOLV
 }
 
 run_hook() {
