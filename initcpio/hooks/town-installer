@@ -64,7 +64,7 @@ run_hook() {
         TTY_ARGS="--tty /dev/$last_console"
     fi
 
-    /usr/bin/ttyforce initrd --etc-prefix /town-os/etc/overlays/root $TTY_ARGS
+    /usr/bin/ttyforce initrd --etc-prefix /town-os/etc/overlays/root --ssh-user root,status $TTY_ARGS
     echo "town-installer: ttyforce exited with code $?" > /dev/kmsg
 
     # ttyforce unmounts /town-os before returning — re-mount to persist config
@@ -72,10 +72,9 @@ run_hook() {
     if mount -t btrfs /town-os 2>/dev/null || mount_town_os; then
         msg ":: Persisting network config to /town-os..."
 
-        # Create etc/var overlay directories and SSH keys dir on persistent storage
+        # Create etc/var overlay directories on persistent storage
         mkdir -p /town-os/etc/overlays/root /town-os/etc/overlays/work
         mkdir -p /town-os/var/overlays/root /town-os/var/overlays/work
-        mkdir -p /town-os/ssh/authorized_keys
 
         # Mask the catch-all 10-ethernet.network so only the selected interface is active
         mkdir -p /town-os/etc/overlays/root/systemd/network

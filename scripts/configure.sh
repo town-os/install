@@ -17,13 +17,6 @@ echo '/usr/lib/town-os/scripts/ttyforce-status.sh' >> /etc/shells
 useradd -m -s /usr/lib/town-os/scripts/ttyforce-status.sh status
 echo 'status:enjoytownos' | chpasswd
 
-# SSH authorized_keys symlinks → persistent btrfs storage
-mkdir -p /root/.ssh
-ln -sf /town-os/ssh/authorized_keys/root /root/.ssh/authorized_keys
-mkdir -p /home/status/.ssh
-ln -sf /town-os/ssh/authorized_keys/status /home/status/.ssh/authorized_keys
-chown -R status:status /home/status/.ssh
-
 ln -sf /usr/share/zoneinfo/UTC /etc/localtime
 locale-gen
 echo LANG=en_US.UTF-8 >/etc/locale.conf
@@ -86,12 +79,11 @@ sed -i \
   -e 's/^#PasswordAuthentication .*/PasswordAuthentication yes/' \
   /etc/ssh/sshd_config
 
-# Disable password auth per-user when their authorized_keys exists
-cat >>/etc/ssh/sshd_config <<'SSHD'
+# Ensure sshd includes drop-in configs (ssh-setup.sh writes town-os.conf at boot)
+mkdir -p /etc/ssh/sshd_config.d
+grep -q 'Include /etc/ssh/sshd_config.d' /etc/ssh/sshd_config || \
+  sed -i '1i Include /etc/ssh/sshd_config.d/*.conf' /etc/ssh/sshd_config
 
-Match exec "test -s /town-os/ssh/authorized_keys/%u"
-    PasswordAuthentication no
-SSHD
 mkdir -p /var/log/journal
 # Can't symlink during chroot (bind-mounted), so make/install.sh handles it after chroot exits
 

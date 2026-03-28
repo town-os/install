@@ -91,8 +91,17 @@ town_squashfs_mount() {
         mkdir -p "$newroot/town-os"
         mount --move /town-os "$newroot/town-os"
 
-        # /etc and /var overlays are mounted by town-os-overlays.service after
-        # switch_root, using correct post-pivot paths. Mounting here would use
-        # $newroot/... paths that become stale dentry references after pivot_root.
+        # /etc overlay is mounted by town-os-overlays.service after switch_root
+        # using correct post-pivot paths.
+        #
+        # /var overlay MUST be mounted here in the initrd — mounting over /var
+        # after systemd starts breaks journald, sockets, and PID files.
+        # The $newroot path in the mount options becomes stale after pivot_root
+        # but the kernel tracks overlay dentries internally so it still works.
+        if [ -d "$newroot/town-os/var/overlays/root" ]; then
+            mount -t overlay overlay \
+                -o "lowerdir=$newroot/.town/sfs/var,upperdir=$newroot/town-os/var/overlays/root,workdir=$newroot/town-os/var/overlays/work" \
+                "$newroot/var"
+        fi
     fi
 }

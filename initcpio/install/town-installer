@@ -26,6 +26,7 @@ build() {
     add_binary btrfs
     add_binary tr
     add_binary curl
+    add_file /etc/ssl/certs/ca-certificates.crt
     add_runscript
 }
 

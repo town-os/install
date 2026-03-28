@@ -4,6 +4,7 @@ Description=Town OS System Controller
 DefaultDependencies=yes
 Requires=network-online.target
 After=network-online.target
+RequiresMountsFor=/town-os
 StartLimitIntervalSec=0
 
 [Service]
