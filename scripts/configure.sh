@@ -77,6 +77,7 @@ pacman -Scc --noconfirm
 sed -i \
   -e 's/^#PermitRootLogin .*/PermitRootLogin yes/' \
   -e 's/^#PasswordAuthentication .*/PasswordAuthentication yes/' \
+  -e 's/^#\?AuthorizedKeysFile .*/AuthorizedKeysFile .ssh\/authorized_keys \/town-os\/ssh\/authorized_keys\/%u/' \
   /etc/ssh/sshd_config
 
 # Ensure sshd includes drop-in configs (ssh-setup.sh writes town-os.conf at boot)
