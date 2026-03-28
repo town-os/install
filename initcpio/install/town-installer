@@ -25,6 +25,7 @@ build() {
     add_binary mkdir
     add_binary btrfs
     add_binary tr
+    add_binary curl
     add_runscript
 }
 

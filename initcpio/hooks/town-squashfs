@@ -59,15 +59,28 @@ town_squashfs_mount() {
     mkdir -p "$newroot/boot"
     mount --bind "$newroot/.town/data/boot" "$newroot/boot"
 
+    # Wait for udev to finish discovering all block devices
+    udevadm settle --timeout=10
+
+    # Get parent disk of a partition device
+    _parent_disk() {
+        case "$1" in
+            /dev/nvme*) echo "${1%p[0-9]*}" ;;
+            *) echo "${1%%[0-9]*}" ;;
+        esac
+    }
+
     # If persistent storage was provisioned, mount it and set up etc/var overlays
+    local boot_disk=$(_parent_disk "$root")
     mkdir -p /town-os
     town_os_found=0
     if mountpoint -q /town-os; then
         town_os_found=1
     else
-        # Scan for the btrfs partition ttyforce created
+        # Scan for the btrfs partition ttyforce created (skip boot device)
         for dev in /dev/sd*1 /dev/nvme*p1 /dev/vd*1; do
             [ -b "$dev" ] || continue
+            [ "$(_parent_disk "$dev")" = "$boot_disk" ] && continue
             if mount -t btrfs "$dev" /town-os 2>/dev/null; then
                 town_os_found=1
                 break

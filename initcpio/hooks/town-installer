@@ -1,9 +1,21 @@
 #!/usr/bin/ash
 
+# Get parent disk of a partition device
+# /dev/sda1 → /dev/sda, /dev/nvme0n1p1 → /dev/nvme0n1, /dev/vda1 → /dev/vda
+_parent_disk() {
+    case "$1" in
+        /dev/nvme*) echo "${1%p[0-9]*}" ;;
+        *) echo "${1%%[0-9]*}" ;;
+    esac
+}
+
 mount_town_os() {
-    # Scan for a btrfs partition with Town OS overlay dirs
+    local boot_disk=$(_parent_disk "$root")
+
+    # Scan for a btrfs partition with Town OS overlay dirs (skip boot device)
     for dev in /dev/sd*1 /dev/nvme*p1 /dev/vd*1; do
         [ -b "$dev" ] || continue
+        [ "$(_parent_disk "$dev")" = "$boot_disk" ] && continue
         if mount -t btrfs "$dev" /town-os 2>/dev/null; then
             if [ -d /town-os/etc ] || [ -d /town-os/var ]; then
                 return 0
