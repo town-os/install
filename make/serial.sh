@@ -10,4 +10,4 @@ if [ ! -S "${SOCK}" ]; then
 fi
 
 echo "Connecting to serial console (Ctrl-] to disconnect)..."
-exec sudo -E socat -,raw,echo=0,escape=0x1d UNIX-CONNECT:"${SOCK}"
+exec sudo socat -,raw,echo=0,escape=0x1d UNIX-CONNECT:"${SOCK}"

@@ -6,10 +6,10 @@ IMAGE="${IMAGE:-image.raw}"
 
 found=0
 
-VMS=$(sudo -E virsh list --name 2>/dev/null || true)
+VMS=$(sudo virsh list --name 2>/dev/null || true)
 if echo "$VMS" | grep -q .; then
   for vm in $VMS; do
-    ip=$(sudo -E virsh domifaddr "${vm}" 2>/dev/null \
+    ip=$(sudo virsh domifaddr "${vm}" 2>/dev/null \
       | awk '/ipv4/ { split($4,a,"/"); print a[1] }')
     if [ -n "${ip}" ]; then
       echo "QEMU (${vm}): ${ip}"
@@ -21,7 +21,7 @@ fi
 if pgrep -f "qemu-system.*${IMAGE}" >/dev/null 2>&1 && [ "${found}" -eq 0 ]; then
   # Derive the same stable MAC that qemu.sh generates from VM_NAME
   MAC=$(echo "${VM_NAME}" | md5sum | sed 's/^\(..\)\(..\)\(..\).*/52:54:00:\1:\2:\3/')
-  ip=$(sudo -E virsh net-dhcp-leases default 2>/dev/null \
+  ip=$(sudo virsh net-dhcp-leases default 2>/dev/null \
     | awk -v mac="${MAC}" '$3 == mac { split($5,a,"/"); print a[1] }' | tail -1)
   if [ -n "${ip}" ]; then
     echo "QEMU: ${ip}"

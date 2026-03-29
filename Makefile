@@ -29,7 +29,7 @@ image:
 	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) ${PWD}/make/image.sh $(IMAGE_SIZE) $(IMAGE)
 
 compress-release:
-	sudo -E pv $(IMAGE) | lbzip2 > $(IMAGE).bz2 && rm -f $(IMAGE)
+	sudo pv $(IMAGE) | lbzip2 > $(IMAGE).bz2 && rm -f $(IMAGE)
 
 image-release: image compress-release
 

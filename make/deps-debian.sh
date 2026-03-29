@@ -5,26 +5,26 @@
 # actual build. Only VM launching (QEMU) runs natively on the Debian host.
 set -euo pipefail
 
-sudo -E apt-get update
-sudo -E apt-get install -y \
+sudo apt-get update
+sudo apt-get install -y \
   build-essential parted e2fsprogs dosfstools rsync psmisc lsof \
   squashfs-tools libvirt-daemon-system libvirt-clients dnsmasq-base \
   qemu-system-x86 qemu-utils socat lbzip2 pv podman \
   dbus util-linux
 
-sudo -E busctl call org.freedesktop.systemd1 /org/freedesktop/systemd1 \
+sudo busctl call org.freedesktop.systemd1 /org/freedesktop/systemd1 \
   org.freedesktop.systemd1.Manager EnableUnitFiles "asbb" 1 "libvirtd.service" false false
-sudo -E busctl call org.freedesktop.systemd1 /org/freedesktop/systemd1 \
+sudo busctl call org.freedesktop.systemd1 /org/freedesktop/systemd1 \
   org.freedesktop.systemd1.Manager StartUnit "ss" "libvirtd.service" "replace"
-sudo -E virsh net-define /usr/share/libvirt/networks/default.xml 2>/dev/null || true
-sudo -E virsh net-start default 2>/dev/null || true
-sudo -E virsh net-autostart default
+sudo virsh net-define /usr/share/libvirt/networks/default.xml 2>/dev/null || true
+sudo virsh net-start default 2>/dev/null || true
+sudo virsh net-autostart default
 
 # Enable mDNS in systemd-resolved for .local resolution across the VM bridge
-sudo -E mkdir -p /etc/systemd/resolved.conf.d
-printf '[Resolve]\nMulticastDNS=yes\n' | sudo -E tee /etc/systemd/resolved.conf.d/mdns.conf >/dev/null
-sudo -E resolvectl mdns virbr0 yes 2>/dev/null || true
-sudo -E systemctl reload systemd-resolved 2>/dev/null || true
+sudo mkdir -p /etc/systemd/resolved.conf.d
+printf '[Resolve]\nMulticastDNS=yes\n' | sudo tee /etc/systemd/resolved.conf.d/mdns.conf >/dev/null
+sudo resolvectl mdns virbr0 yes 2>/dev/null || true
+sudo systemctl reload systemd-resolved 2>/dev/null || true
 
 echo ""
 echo "Host dependencies installed."

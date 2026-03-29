@@ -7,14 +7,14 @@ VM_MEMORY="${VM_MEMORY:?VM_MEMORY is required}"
 VM_BRIDGE="${VM_BRIDGE:?VM_BRIDGE is required}"
 FOREGROUND="${FOREGROUND:-0}"
 
-sudo -E ip link set "${VM_BRIDGE}" allmulticast on 2>/dev/null || true
+sudo ip link set "${VM_BRIDGE}" allmulticast on 2>/dev/null || true
 
 # Disable IGMP snooping so the bridge floods mDNS multicast to all ports
-sudo -E ip link set "${VM_BRIDGE}" type bridge mcast_snooping 0 2>/dev/null || true
+sudo ip link set "${VM_BRIDGE}" type bridge mcast_snooping 0 2>/dev/null || true
 
 # Allow multicast (mDNS) through the bridge — br_netfilter drops it by default
-sudo -E sysctl -w net.bridge.bridge-nf-call-iptables=0 2>/dev/null || true
-sudo -E sysctl -w net.bridge.bridge-nf-call-ip6tables=0 2>/dev/null || true
+sudo sysctl -w net.bridge.bridge-nf-call-iptables=0 2>/dev/null || true
+sudo sysctl -w net.bridge.bridge-nf-call-ip6tables=0 2>/dev/null || true
 
 for i in 0 1 2 3; do
   if [ ! -f "disk${i}.img" ]; then
@@ -37,7 +37,7 @@ fi
 # seeded from the VM name so the same VM always gets the same MAC/IP
 MAC=$(echo "${VM_NAME:-town-os}" | md5sum | sed 's/^\(..\)\(..\)\(..\).*/52:54:00:\1:\2:\3/')
 
-sudo -E qemu-system-x86_64 \
+sudo qemu-system-x86_64 \
   -enable-kvm \
   -m "${VM_MEMORY}" \
   -netdev bridge,id=net0,br="${VM_BRIDGE}" \
@@ -58,7 +58,7 @@ sudo -E qemu-system-x86_64 \
   "${DAEMON_ARGS[@]}"
 
 if [ "${FOREGROUND}" != "1" ]; then
-  PID=$(sudo -E cat qemu.pid)
+  PID=$(sudo cat qemu.pid)
   echo "QEMU running in background (PID ${PID})"
   echo "Serial console: socat - UNIX-CONNECT:/tmp/town-os-serial.sock"
 
