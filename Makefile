@@ -26,7 +26,7 @@ run: stop $(IMAGE)
 	  ${PWD}/make/run.sh $(IMAGE)
 
 image:
-	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) ${PWD}/make/image.sh $(IMAGE_SIZE) $(IMAGE)
+	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) ${PWD}/make/image.sh $(IMAGE_SIZE) $(IMAGE)
 
 compress-release:
 	sudo -E pv $(IMAGE) | lbzip2 > $(IMAGE).bz2 && rm -f $(IMAGE)
