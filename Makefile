@@ -2,6 +2,7 @@ BUILD_DATE       := $(shell date +%Y-%m-%d)
 IMAGE            ?= town-os-$(BUILD_DATE).img
 IMAGE_SIZE       ?= 12G
 CONTROLLER_IMAGE ?= quay.io/town/town:rc.latest
+ROLODEX_IMAGE    ?= quay.io/town/rolodex:$(lastword $(subst :, ,$(CONTROLLER_IMAGE)))
 UI_IMAGE         ?= quay.io/town/ui:rc.latest
 VM_DISK_SIZE ?= $(shell grep '^vm_disk_size:' town-os.yaml \
                   | awk '{ print $$2 }' | tr -d '"' | tr -d "'" \

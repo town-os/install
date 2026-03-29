@@ -3,7 +3,8 @@
 Description=Town OS System Controller
 DefaultDependencies=yes
 Requires=network-online.target
-After=network-online.target
+Wants=town-os-system--rolodex.service
+After=network-online.target town-os-system--rolodex.service
 RequiresMountsFor=/town-os
 StartLimitIntervalSec=0
 

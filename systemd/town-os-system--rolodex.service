@@ -1,0 +1,29 @@
+# vim: ft=systemd
+[Unit]
+Description=Town OS System Service: Rolodex DNS
+DefaultDependencies=yes
+Requires=network-online.target
+After=network-online.target
+RequiresMountsFor=/town-os
+Before=town-os-systemcontroller.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+ExecStartPre=/bin/mkdir -p /town-os/rolodex
+ExecStartPre=/bin/sh -c 'test -f /town-os/rolodex/rolodex.yml || printf "database_path: /data/rolodex.db\ndns:\n  udp_bind: \"0.0.0.0:53\"\n  tcp_bind: \"0.0.0.0:53\"\ngrpc:\n  tcp_bind: \"\"\n  unix_socket: /data/rolodex.sock\n  shared_secret: \"\"\nforwarders:\n  - \"8.8.8.8:53\"\n  - \"8.8.4.4:53\"\nrbl:\n  enabled: false\n  providers: []\n" > /town-os/rolodex/rolodex.yml'
+ExecStartPre=-/usr/bin/podman container cleanup town-os-system--rolodex
+ExecStartPre=-/usr/bin/podman stop -t 10 town-os-system--rolodex
+ExecStartPre=-/usr/bin/podman rm -f town-os-system--rolodex
+ExecStart=/usr/bin/podman run --pull=missing --replace --name town-os-system--rolodex \
+    -p 127.0.0.2:53:53/tcp \
+    -p 127.0.0.2:53:53/udp \
+    -v /town-os/rolodex:/data \
+    quay.io/town/rolodex:rc.latest \
+    /usr/local/bin/rolodex-dns --config /data/rolodex.yml
+ExecStop=/usr/bin/podman stop -t 10 town-os-system--rolodex
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

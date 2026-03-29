@@ -171,6 +171,7 @@ export PACKAGE_DNS
 
 rsync -a ./systemd/ $MOUNT_POINT/etc/systemd/system/
 sed -i "s|quay.io/town/town:rc.latest|${CONTROLLER_IMAGE}|g" $MOUNT_POINT/etc/systemd/system/town-os-systemcontroller.service
+sed -i "s|quay.io/town/rolodex:rc.latest|${ROLODEX_IMAGE}|g" $MOUNT_POINT/etc/systemd/system/town-os-system--rolodex.service
 if [ -n "$PACKAGE_DNS" ]; then
   sed -i "s|@PACKAGE_DNS@|-package-dns ${PACKAGE_DNS}|g" $MOUNT_POINT/etc/systemd/system/town-os-systemcontroller.service
 else
@@ -206,8 +207,9 @@ podman exec town-build busctl call \
 
 podman exec town-build busctl call \
   org.freedesktop.systemd1 /org/freedesktop/systemd1 \
-  org.freedesktop.systemd1.Manager EnableUnitFiles "asbb" 10 \
+  org.freedesktop.systemd1.Manager EnableUnitFiles "asbb" 11 \
   "town-os-overlays.service" \
+  "town-os-system--rolodex.service" \
   "town-os-systemcontroller.service" \
   "town-os-sledgehammer.service" \
   "town-os-network-diag.timer" \
