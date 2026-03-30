@@ -96,11 +96,12 @@ town_squashfs_mount() {
         #
         # /var overlay MUST be mounted here in the initrd — mounting over /var
         # after systemd starts breaks journald, sockets, and PID files.
-        # The $newroot path in the mount options becomes stale after pivot_root
-        # but the kernel tracks overlay dentries internally so it still works.
+        # Use post-pivot paths (/town-os, /.town) so /proc/mounts is clean
+        # after switch_root. The underlying mounts are already moved into
+        # $newroot above, so these paths resolve correctly.
         if [ -d "$newroot/town-os/var/overlays/root" ]; then
             mount -t overlay overlay \
-                -o "lowerdir=$newroot/.town/sfs/var,upperdir=$newroot/town-os/var/overlays/root,workdir=$newroot/town-os/var/overlays/work" \
+                -o "lowerdir=/.town/sfs/var,upperdir=/town-os/var/overlays/root,workdir=/town-os/var/overlays/work" \
                 "$newroot/var"
         fi
     fi
