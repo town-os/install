@@ -12,8 +12,7 @@ StartLimitIntervalSec=0
 Type=exec
 ExecStartPre=/bin/mkdir -p /town-os/rolodex
 ExecStartPre=/bin/sh -c '\
-  EXTERNAL_IP=$(ip -4 route get 1.1.1.1 2>/dev/null | awk "/src/{for(i=1;i<=NF;i++) if($i==\"src\") print $(i+1)}"); \
-  printf "database_path: /data/rolodex.db\ndns:\n  udp_bind:\n    - \"127.0.0.2:53\"\n    - \"${EXTERNAL_IP:-0.0.0.0}:53\"\n  tcp_bind:\n    - \"127.0.0.2:53\"\n    - \"${EXTERNAL_IP:-0.0.0.0}:53\"\ngrpc:\n  tcp_bind: \"\"\n  unix_socket: /data/rolodex.sock\n  shared_secret: \"\"\nforwarders:\n  - \"1.1.1.1:53\"\n  - \"8.8.8.8:53\"\nrbl:\n  enabled: true\n  providers: []\n" > /town-os/rolodex/rolodex.yml'
+  test -f /town-os/rolodex/rolodex.yml || printf "database_path: /data/rolodex.db\ndns:\n  udp_bind:\n    - \"127.0.0.2:53\"\n    - remote\n  tcp_bind:\n    - \"127.0.0.2:53\"\n    - remote\ngrpc:\n  tcp_bind: \"\"\n  unix_socket: /data/rolodex.sock\n  shared_secret: \"\"\nforwarders:\n  - \"1.1.1.1:53\"\n  - \"8.8.8.8:53\"\nrbl:\n  enabled: true\n  providers: []\n" > /town-os/rolodex/rolodex.yml'
 ExecStartPre=-/usr/bin/podman container cleanup town-os-system--rolodex
 ExecStartPre=-/usr/bin/podman stop -t 10 town-os-system--rolodex
 ExecStartPre=-/usr/bin/podman rm -f town-os-system--rolodex
