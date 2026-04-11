@@ -86,7 +86,9 @@ Override on the command line, e.g. `make qemu VM_MEMORY=8G`.
 |--------------------|----------------------------------|------------------------------------------|
 | `IMAGE`            | `image.raw`                      | Output image filename                    |
 | `IMAGE_SIZE`       | `12G`                            | Size of the raw disk image               |
-| `CONTROLLER_IMAGE` | `quay.io/town/town:rc.latest`    | System controller container image        |
+| `CONTROLLER_BASE`  | `quay.io/town/town`              | Controller image repository (no tag)      |
+| `CONTROLLER_TAG`   | `rc.latest`                      | Controller image tag (composed onto base) |
+| `CONTROLLER_IMAGE` | `$(CONTROLLER_BASE):$(CONTROLLER_TAG)` | Full controller image reference (override to use a different registry) |
 | `UI_IMAGE`         | `quay.io/town/ui:rc.latest`      | UI container image                       |
 | `VM_DISK_SIZE`     | `50G` (from `town-os.yaml`)      | Size of each sparse data disk            |
 | `VM_MEMORY`        | `4G`                             | RAM allocated to the QEMU VM             |
@@ -211,7 +213,9 @@ The install script performs the following steps:
 
 | Variable           | Effect                                                        |
 |--------------------|---------------------------------------------------------------|
-| `CONTROLLER_IMAGE` | Container image for the system controller service             |
+| `CONTROLLER_BASE`  | Repository portion of the controller image (default `quay.io/town/town`) |
+| `CONTROLLER_TAG`   | Tag portion of the controller image (default `rc.latest`)     |
+| `CONTROLLER_IMAGE` | Full controller image reference; overrides `CONTROLLER_BASE`/`CONTROLLER_TAG` when set |
 | `UI_IMAGE`         | Container image for the UI service                            |
 | `DEBUG`            | When non-empty, storage scripts run in debug/dry-run mode     |
 | `KEEP_MOUNT`       | When non-empty, skip unmount and USB write; print mount path  |

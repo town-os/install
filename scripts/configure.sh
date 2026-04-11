@@ -82,12 +82,15 @@ sed -i \
 mkdir -p /var/log/journal
 # Can't symlink during chroot (bind-mounted), so make/install.sh handles it after chroot exits
 
-# Configure systemd-resolved: keep 127.0.0.2 free for rolodex, enable mDNS
-# for .local hostname advertisement (replaces avahi-daemon)
+# Configure systemd-resolved as the DNS broker: prefer rolodex (127.0.0.2)
+# when available, fall through to Cloudflare/Google on failure. resolved
+# cycles through DNS= servers on timeout and caches which are dead, so a
+# rolodex outage degrades to the upstreams automatically. mDNS is enabled
+# for .local hostname advertisement (replaces avahi-daemon).
 mkdir -p /etc/systemd/resolved.conf.d
 cat >/etc/systemd/resolved.conf.d/townos.conf <<RESOLVED
 [Resolve]
-DNS=1.1.1.1 8.8.8.8
+DNS=127.0.0.2 1.1.1.1 8.8.8.8
 FallbackDNS=1.1.1.1 8.8.8.8
 DNSStubListener=yes
 DNSStubListenerExtra=
