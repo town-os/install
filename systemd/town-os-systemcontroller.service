@@ -12,7 +12,7 @@ StartLimitIntervalSec=0
 [Service]
 Type=exec
 ExecStartPre=/bin/ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
-ExecStartPre=/usr/bin/mkdir -p /town-os/data/db /town-os/data/repos /var/lib/containers
+ExecStartPre=/usr/bin/mkdir -p /town-os/data/db /town-os/data/repos /var/lib/containers /run/town-os
 ExecStartPre=-/usr/bin/podman rm -f systemcontroller
 ExecStart=/usr/bin/podman run --pull=always \
     --name systemcontroller \
@@ -30,6 +30,7 @@ ExecStart=/usr/bin/podman run --pull=always \
     -v /etc/machine-id:/etc/machine-id:ro \
     -v /town-os:/town-os:shared \
     -v /var/log:/var/log \
+    -v /run/town-os:/run/town-os \
     quay.io/town/town:rc.latest \
     /systemcontroller \
     -repo-dir /town-os/data/repos \
