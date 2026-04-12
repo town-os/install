@@ -97,6 +97,14 @@ DNSStubListenerExtra=
 MulticastDNS=yes
 RESOLVED
 
+# Speed up boot: only wait for one interface to be online, with a 10s cap.
+mkdir -p /etc/systemd/system/systemd-networkd-wait-online.service.d
+cat >/etc/systemd/system/systemd-networkd-wait-online.service.d/any.conf <<WAITONLINE
+[Service]
+ExecStart=
+ExecStart=/usr/lib/systemd/systemd-networkd-wait-online --any --timeout=10
+WAITONLINE
+
 # Prevent systemd-resolved from being stopped or disabled
 mkdir -p /etc/systemd/system/systemd-resolved.service.d
 cat >/etc/systemd/system/systemd-resolved.service.d/no-disable.conf <<NODISABLE

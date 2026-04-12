@@ -3,8 +3,8 @@
 Description=Town OS System Controller
 DefaultDependencies=yes
 Requires=network-online.target
-Requires=town-os-system--rolodex.service
-Requires=town-os-podman-api.service
+Wants=town-os-system--rolodex.service
+Wants=town-os-podman-api.service
 After=network-online.target town-os-system--rolodex.service town-os-podman-api.service
 RequiresMountsFor=/town-os
 StartLimitIntervalSec=0
@@ -40,6 +40,7 @@ ExecStart=/usr/bin/podman run --pull=always \
 ExecStopPost=/bin/ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
 Restart=always
 RestartSec=5
+RestartForceExitStatus=143 SIGTERM
 
 [Install]
 WantedBy=default.target
