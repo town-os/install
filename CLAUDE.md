@@ -12,6 +12,7 @@ make             # build image and launch VM
 make qemu-fg     # build and launch QEMU with serial console attached
 make serial      # attach to running QEMU serial console (Ctrl-] to disconnect)
 make stop        # stop all VMs
+make flash        # build image if stale, write to USB
 make clean        # remove current image and VM disks
 make clean-images # remove all built images
 ```
@@ -137,6 +138,8 @@ All systemd operations MUST use D-Bus (`busctl`) instead of the `systemctl` CLI.
 - **Container image pull policy**: Both the systemcontroller and rolodex services MUST use `--pull=always` so that container images are re-pulled on every (re)start. This ensures updates are picked up without manual intervention.
 - **Podman API socket for the systemcontroller**: `town-os-podman-api.service` runs `podman system service -t 0 unix:///run/podman/podman.sock` as a long-running process (not socket-activated) so the host's podman REST API is always reachable. The systemcontroller container `Requires=` and `After=` this unit, and bind-mounts the socket (`-v /run/podman/podman.sock:/run/podman/podman.sock`) so it can drive sibling containers via the host podman. The host podman's graphroot remains `/town-os/containers` (set in `/etc/containers/storage.conf`), so all images and containers managed via the socket land on the persistent btrfs. The systemcontroller also bind-mounts `/var/lib/containers:/var/lib/containers:shared`; note that this is **not** the host graphroot — `/var/lib/containers` lives on the btrfs-backed `/var` overlay and is exposed as a separate persistent path distinct from `/town-os/containers`. The `:shared` propagation lets nested mounts under that path become visible across the bind in both directions. The systemcontroller's `ExecStartPre` `mkdir -p /var/lib/containers` ensures the host directory exists before podman creates the bind.
 - **No host side effects**: Build and VM tasks (image, qemu, qemu-fg, run) MUST NOT install packages, modify host services, or touch the host's package manager. The `deps` target is manual-only and must never be a dependency of other targets. `pacstrap` inside `make/install.sh` uses the host's pacman database (unavoidable), but no other host state should be modified during builds.
+- **NEVER run image builds or flash commands**: Claude MUST NOT run `make image`, `make flash`, `make qemu-fg`, `make qemu`, `make run`, `sudo make`, or any command that builds images or writes to USB devices. These are destructive, long-running, require root, and must only be initiated by the user. Claude may edit source files, Makefile rules, and scripts, but must leave building and flashing to the user.
+- **Image freshness**: `$(IMAGE)` depends on `IMAGE_SOURCES` (a wildcard of all scripts, systemd units, initcpio hooks, town-os.yaml, and Makefile) plus `.build-config` (a stamp file tracking build-relevant variables like `CONTROLLER_IMAGE`, `TTYFORCE_DEV`, etc.). Changing a source file or passing a different variable triggers an automatic rebuild when any target that depends on the image is invoked (flash, qemu, qemu-fg, run, virtualbox).
 
 ## Default Credentials
 

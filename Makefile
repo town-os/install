@@ -27,8 +27,36 @@ run: stop $(IMAGE)
 	  VM_NAME=$(VM_NAME) IMAGE=$(IMAGE) FOREGROUND=$(FOREGROUND) \
 	  ${PWD}/make/run.sh $(IMAGE)
 
-image:
+IMAGE_SOURCES := $(wildcard make/install.sh scripts/*.sh systemd/*.service systemd/*.timer \
+                           initcpio/hooks/* initcpio/install/* town-os.yaml Makefile)
+
+# Rebuild the image when build-relevant variables change.
+# The stamp file is always re-evaluated but only touched when content differs.
+FORCE:
+.build-config: FORCE
+	@printf '%s\n' \
+	  'CONTROLLER_IMAGE=$(CONTROLLER_IMAGE)' \
+	  'ROLODEX_IMAGE=$(ROLODEX_IMAGE)' \
+	  'UI_IMAGE=$(UI_IMAGE)' \
+	  'TTYFORCE_DEV=$(TTYFORCE_DEV)' \
+	  'TTYFORCE_LATEST=$(TTYFORCE_LATEST)' \
+	  'IMAGE_HOSTNAME=$(IMAGE_HOSTNAME)' \
+	  'LOCAL_DNS=$(LOCAL_DNS)' \
+	  'IMAGE_SIZE=$(IMAGE_SIZE)' | cmp -s - $@ || \
+	printf '%s\n' \
+	  'CONTROLLER_IMAGE=$(CONTROLLER_IMAGE)' \
+	  'ROLODEX_IMAGE=$(ROLODEX_IMAGE)' \
+	  'UI_IMAGE=$(UI_IMAGE)' \
+	  'TTYFORCE_DEV=$(TTYFORCE_DEV)' \
+	  'TTYFORCE_LATEST=$(TTYFORCE_LATEST)' \
+	  'IMAGE_HOSTNAME=$(IMAGE_HOSTNAME)' \
+	  'LOCAL_DNS=$(LOCAL_DNS)' \
+	  'IMAGE_SIZE=$(IMAGE_SIZE)' > $@
+
+$(IMAGE): $(IMAGE_SOURCES) .build-config
 	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) TTYFORCE_DEV=$(TTYFORCE_DEV) TTYFORCE_LATEST=$(TTYFORCE_LATEST) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) ${PWD}/make/image.sh $(IMAGE_SIZE) $(IMAGE)
+
+image: $(IMAGE)
 
 compress-release:
 	sudo pv $(IMAGE) | lbzip2 > $(IMAGE).bz2 && rm -f $(IMAGE)

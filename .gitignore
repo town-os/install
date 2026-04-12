@@ -4,3 +4,4 @@
 /*.vdi
 /*.pid
 /*.img.*
+/.build-config

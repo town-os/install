@@ -60,7 +60,8 @@ Once the VM is running, use `make vm-ip` to resolve its IP address.
 |---------------------|----------------------------------------------------------------|
 | `run`               | Auto-detect hypervisor, build image, launch VM (default target)|
 | `stop`              | Stop any tracked VMs (QEMU and/or VirtualBox)                  |
-| `image`             | Build the raw disk image                                       |
+| `image`             | Build the raw disk image (skips if up to date)                 |
+| `flash`             | Build image if stale, write to first USB storage device        |
 | `run-release`       | Same as `run` but with release (`:latest`) images              |
 | `image-release`     | Build a release image (`:latest` tags)                         |
 | `qemu`              | Install deps, build image, launch QEMU in background (explicit)|
@@ -77,6 +78,13 @@ Once the VM is running, use `make vm-ip` to resolve its IP address.
 | `deps`              | Install required build dependencies via pacman (Arch Linux)     |
 | `deps-debian`       | Install required host dependencies via apt (Debian/Ubuntu)      |
 | `cleanup-loopback`  | Kill processes on loopback mounts and detach all loops          |
+
+## Image freshness
+
+The image is rebuilt automatically when any source file changes (scripts, systemd
+units, initcpio hooks, `town-os.yaml`, `Makefile`) or when build variables change
+(`CONTROLLER_TAG`, `TTYFORCE_DEV`, etc.). A `.build-config` stamp file tracks the
+current variable values; if they differ from the last build, the image is rebuilt.
 
 ## Tunable variables
 
