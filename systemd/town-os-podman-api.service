@@ -1,0 +1,16 @@
+# vim: ft=systemd
+[Unit]
+Description=Town OS Podman API Socket
+DefaultDependencies=yes
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+ExecStartPre=/usr/bin/mkdir -p /run/podman
+ExecStart=/usr/bin/podman system service -t 0 unix:///run/podman/podman.sock
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

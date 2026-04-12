@@ -71,6 +71,8 @@ initcpio/
   hooks/town-squashfs     # Mounts squashfs root with tmpfs overlay
 systemd/
   town-os-systemcontroller.service  # Podman-based system controller
+  town-os-system--rolodex.service   # Rolodex DNS, runs before systemcontroller
+  town-os-podman-api.service        # Persistent podman REST API at /run/podman/podman.sock
   town-os-sledgehammer.service      # Erase permanent storage on demand
   town-os-network-diag.*            # Periodic network state logging
   town-os-overlays.service           # Mount persistent etc/var overlays from btrfs
@@ -133,6 +135,7 @@ All systemd operations MUST use D-Bus (`busctl`) instead of the `systemctl` CLI.
 - **`StartLimitIntervalSec` belongs in `[Unit]`**: systemd silently ignores this directive if placed in `[Service]`. Always put it in `[Unit]`.
 - **Service restart resilience**: Systemd services that depend on network (e.g. systemcontroller pulling container images) must use `StartLimitIntervalSec=0` to disable the start rate limit, and a reasonable `RestartSec` (e.g. 5s) to avoid spamming. Without this, systemd's default rate limit (5 starts in 10s) permanently stops restarting the service if the network isn't ready yet (e.g. DNS unavailable before rolodex is running).
 - **Container image pull policy**: Both the systemcontroller and rolodex services MUST use `--pull=always` so that container images are re-pulled on every (re)start. This ensures updates are picked up without manual intervention.
+- **Podman API socket for the systemcontroller**: `town-os-podman-api.service` runs `podman system service -t 0 unix:///run/podman/podman.sock` as a long-running process (not socket-activated) so the host's podman REST API is always reachable. The systemcontroller container `Requires=` and `After=` this unit, and bind-mounts the socket (`-v /run/podman/podman.sock:/run/podman/podman.sock`) so it can drive sibling containers via the host podman. The host podman's graphroot remains `/town-os/containers` (set in `/etc/containers/storage.conf`), so all images and containers managed via the socket land on the persistent btrfs. The systemcontroller also bind-mounts `/var/lib/containers:/var/lib/containers:shared`; note that this is **not** the host graphroot — `/var/lib/containers` lives on the btrfs-backed `/var` overlay and is exposed as a separate persistent path distinct from `/town-os/containers`. The `:shared` propagation lets nested mounts under that path become visible across the bind in both directions. The systemcontroller's `ExecStartPre` `mkdir -p /var/lib/containers` ensures the host directory exists before podman creates the bind.
 - **No host side effects**: Build and VM tasks (image, qemu, qemu-fg, run) MUST NOT install packages, modify host services, or touch the host's package manager. The `deps` target is manual-only and must never be a dependency of other targets. `pacstrap` inside `make/install.sh` uses the host's pacman database (unavoidable), but no other host state should be modified during builds.
 
 ## Default Credentials

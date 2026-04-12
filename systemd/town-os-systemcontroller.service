@@ -4,14 +4,15 @@ Description=Town OS System Controller
 DefaultDependencies=yes
 Requires=network-online.target
 Requires=town-os-system--rolodex.service
-After=network-online.target town-os-system--rolodex.service
+Requires=town-os-podman-api.service
+After=network-online.target town-os-system--rolodex.service town-os-podman-api.service
 RequiresMountsFor=/town-os
 StartLimitIntervalSec=0
 
 [Service]
 Type=exec
 ExecStartPre=/bin/ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
-ExecStartPre=/usr/bin/mkdir -p /town-os/data/db /town-os/data/repos
+ExecStartPre=/usr/bin/mkdir -p /town-os/data/db /town-os/data/repos /var/lib/containers
 ExecStartPre=-/usr/bin/podman rm -f systemcontroller
 ExecStart=/usr/bin/podman run --pull=always \
     --name systemcontroller \
@@ -23,6 +24,8 @@ ExecStart=/usr/bin/podman run --pull=always \
     -v /usr/lib/systemd:/usr/lib/systemd \
     -v /run/systemd:/run/systemd \
     -v /run/dbus:/run/dbus \
+    -v /run/podman/podman.sock:/run/podman/podman.sock \
+    -v /var/lib/containers:/var/lib/containers:shared \
     -v /dev:/dev \
     -v /etc/machine-id:/etc/machine-id:ro \
     -v /town-os:/town-os:shared \
