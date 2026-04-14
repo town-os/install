@@ -262,13 +262,24 @@ terminal_input serial console
 terminal_output serial console
 
 set timeout=5
-set default=0
 
 insmod part_gpt
 insmod ext2
 insmod search_fs_uuid
+insmod loadenv
 
 search --no-floppy --fs-uuid --set=root $DATA_UUID
+
+# Honor one-shot boots set by \`grub-reboot\` (writes next_entry to grubenv).
+# Without this, ttyforce's sledgehammer trigger silently no-ops.
+load_env
+if [ "\${next_entry}" ] ; then
+    set default="\${next_entry}"
+    set next_entry=
+    save_env next_entry
+else
+    set default=0
+fi
 
 menuentry "Town OS" {
     linux /boot/$KERNEL root=UUID=$DATA_UUID rootwait rw console=tty0
@@ -285,6 +296,9 @@ menuentry "Sledgehammer - Erase Permanent Storage And Reboot" {
     initrd /boot/$INITRD
 }
 EOF
+
+# Initialize grubenv so \`grub-reboot\` / \`load_env\` have a file to read/write
+chroot_cmd grub-editenv /boot/grub/grubenv create
 
 chroot_cmd grub-install --target=x86_64-efi \
     --efi-directory="/boot/efi" \
