@@ -14,7 +14,13 @@ storage_backend: btrfs
 
 # btrfs_raid_mode: how to handle multi-disk redundancy when storage_backend is btrfs.
 #   native — Use btrfs built-in raid profiles (default).
-#            1 disk: single, 2 disks: raid1, 3+ disks: raid5 data / raid1 metadata.
+#            1 disk:  single
+#            2 disks: raid1 data + raid1 metadata
+#            3 disks: raid5 data + raid1c3 metadata
+#            4+ disks: raid5 data + raid1c3 metadata (or raid6/raid1c4 if selected)
+#            Metadata is always mirrored (raid1cN) when data is a parity profile;
+#            parity metadata triggers a read-modify-write on every small sync
+#            write and is unusable for sqlite/prometheus/journald workloads.
 #   mdadm  — Create an mdadm array first, then format the array device as btrfs.
 #            Useful if you prefer md-raid for redundancy management.
 # This setting is ignored when storage_backend is zfs.
