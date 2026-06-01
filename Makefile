@@ -15,10 +15,53 @@ VM_NAME     ?= town-os
 FOREGROUND  ?=
 LOCAL_DNS   ?=
 
-.PHONY: run run-release stop image image-release qemu qemu-fg \
+.PHONY: help run run-release stop image image-release qemu qemu-fg \
         qemu-release virtualbox virtualbox-fg virtualbox-release \
         stop-qemu stop-virtualbox vm-ip serial clean clean-images \
-        cleanup-loopback deps deps-debian release flash
+        cleanup-loopback deps deps-debian release flash rebuild-qemu
+
+help:
+	@echo 'Town OS Install — Makefile targets'
+	@echo
+	@echo 'Build:'
+	@echo '  image            Build the disk image only (requires root, Arch host)'
+	@echo '  image-release    Build the image and compress it to .bz2'
+	@echo '  release          Build, compress, and publish a release'
+	@echo
+	@echo 'Run (QEMU):'
+	@echo '  qemu             Build if stale, launch QEMU in the background'
+	@echo '  qemu-fg          Build if stale, launch QEMU in the foreground (serial attached)'
+	@echo '  run              Build if stale, launch a libvirt-managed VM'
+	@echo '  rebuild-qemu     stop + clean + image + qemu'
+	@echo '  serial           Attach to a running QEMU serial console (Ctrl-] to detach)'
+	@echo '  vm-ip            Print the IP address of the running VM'
+	@echo
+	@echo 'Run (VirtualBox):'
+	@echo '  virtualbox       Build if stale, launch a VirtualBox VM in the background'
+	@echo '  virtualbox-fg    Build if stale, launch a VirtualBox VM in the foreground'
+	@echo
+	@echo 'Flash:'
+	@echo '  flash            Build if stale, write the image to a USB device'
+	@echo
+	@echo 'Stop:'
+	@echo '  stop             Stop all VMs for this image/name'
+	@echo '  stop-qemu        Stop the QEMU VM only'
+	@echo '  stop-virtualbox  Stop the VirtualBox VM only'
+	@echo
+	@echo 'Clean:'
+	@echo '  clean            Stop VMs and remove the current image and VM disks'
+	@echo '  clean-images     Remove all built images (*.img, *.img.bz2, image.raw)'
+	@echo '  cleanup-loopback Detach stale loopback devices left by a failed build'
+	@echo
+	@echo 'Host dependencies (manual only):'
+	@echo '  deps             Install host dependencies on Arch Linux'
+	@echo '  deps-debian      Install host dependencies on Debian/Ubuntu'
+	@echo
+	@echo 'Common variables (override with VAR=value):'
+	@echo '  IMAGE=$(IMAGE)'
+	@echo '  IMAGE_SIZE=$(IMAGE_SIZE)        VM_DISK_SIZE=$(VM_DISK_SIZE)   VM_MEMORY=$(VM_MEMORY)'
+	@echo '  CONTROLLER_IMAGE=$(CONTROLLER_IMAGE)'
+	@echo '  IMAGE_HOSTNAME, LOCAL_DNS, TTYFORCE_DEV, TTYFORCE_LATEST, KEEP_MOUNT'
 
 rebuild-qemu: stop clean image qemu
 
