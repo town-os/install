@@ -54,7 +54,7 @@ help:
 	@echo '  cleanup-loopback Detach stale loopback devices left by a failed build'
 	@echo
 	@echo 'Host dependencies (manual only):'
-	@echo '  deps             Install host dependencies on Arch Linux'
+	@echo '  deps             Install host dependencies on Arch or Fedora'
 	@echo '  deps-debian      Install host dependencies on Debian/Ubuntu'
 	@echo
 	@echo 'Common variables (override with VAR=value):'

@@ -19,6 +19,16 @@ case "${ID:-}" in
       qemu-system-x86 qemu-utils socat lbzip2 pv podman \
       dbus util-linux
     ;;
+  fedora*|rhel|centos|rocky|almalinux)
+    # Image building still requires Arch-specific tools (pacstrap, mkinitcpio,
+    # arch-chroot) — build in an Arch container. These host deps cover VM
+    # launching. qemu-system-x86 provides the x86_64 emulator the VM scripts
+    # use (needed when the host is aarch64, e.g. Fedora Asahi Remix).
+    sudo dnf install -y \
+      gcc make parted e2fsprogs dosfstools rsync psmisc lsof \
+      squashfs-tools libvirt libvirt-client dnsmasq \
+      qemu-system-x86 qemu-img socat lbzip2 pv podman util-linux
+    ;;
   *)
     echo "Unsupported distro: ${ID:-unknown}" >&2
     echo "Install dependencies manually — see CLAUDE.md for package lists" >&2

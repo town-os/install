@@ -37,10 +37,22 @@ make deps-debian
 
 To build images on Debian/Ubuntu, use an Arch Linux container or build on an Arch host and transfer the image.
 
+### Fedora Setup (incl. Asahi Remix)
+
+`make deps` auto-detects Fedora (and RHEL/CentOS/Rocky/AlmaLinux) and installs host dependencies via `dnf`. As with Debian, image building requires Arch-specific tools (`pacstrap`, `mkinitcpio`, `arch-chroot`) — build in an Arch container or on an Arch host and transfer the image. The VM scripts run `qemu-system-x86_64`, so on aarch64 hosts (e.g. Fedora Asahi Remix on Apple Silicon) the x86_64 image runs under QEMU emulation:
+
+```sh
+make deps
+make qemu-fg
+```
+
 ### Host Dependencies
 
 **Arch Linux** (`make deps`):
 `base-devel` `arch-install-scripts` `parted` `e2fsprogs` `dosfstools` `rsync` `psmisc` `lsof` `squashfs-tools` `libvirt` `dnsmasq` `qemu-full` `socat` `lbzip2` `pv` `podman` `dbus`
+
+**Fedora/RHEL** (`make deps`):
+`gcc` `make` `parted` `e2fsprogs` `dosfstools` `rsync` `psmisc` `lsof` `squashfs-tools` `libvirt` `libvirt-client` `dnsmasq` `qemu-system-x86` `qemu-img` `socat` `lbzip2` `pv` `podman` `util-linux`
 
 **Debian/Ubuntu** (`make deps-debian`):
 `build-essential` `parted` `e2fsprogs` `dosfstools` `rsync` `psmisc` `lsof` `squashfs-tools` `libvirt-daemon-system` `libvirt-clients` `dnsmasq-base` `qemu-system-x86` `qemu-utils` `socat` `lbzip2` `pv` `podman` `dbus` `util-linux`
