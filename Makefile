@@ -18,13 +18,14 @@ LOCAL_DNS   ?=
 .PHONY: help run run-release stop image image-release qemu qemu-fg \
         qemu-release virtualbox virtualbox-fg virtualbox-release \
         stop-qemu stop-virtualbox vm-ip serial clean clean-images \
-        cleanup-loopback deps deps-debian release flash rebuild-qemu
+        cleanup-loopback deps deps-debian release flash rebuild-qemu image-container
 
 help:
 	@echo 'Town OS Install — Makefile targets'
 	@echo
 	@echo 'Build:'
-	@echo '  image            Build the disk image only (requires root, Arch host)'
+	@echo '  image            Build the disk image (native on Arch, else Arch container)'
+	@echo '  image-container  Force the Arch-container build path (any host)'
 	@echo '  image-release    Build the image and compress it to .bz2'
 	@echo '  release          Build, compress, and publish a release'
 	@echo
@@ -70,7 +71,8 @@ run: stop $(IMAGE)
 	  VM_NAME=$(VM_NAME) IMAGE=$(IMAGE) FOREGROUND=$(FOREGROUND) \
 	  ${PWD}/make/run.sh $(IMAGE)
 
-IMAGE_SOURCES := $(wildcard make/install.sh scripts/*.sh systemd/*.service systemd/*.timer \
+IMAGE_SOURCES := $(wildcard make/install.sh make/image-container.sh make/Containerfile.build \
+                           scripts/*.sh systemd/*.service systemd/*.timer \
                            initcpio/hooks/* initcpio/install/* town-os.yaml Makefile)
 
 # Rebuild the image when build-relevant variables change.
@@ -100,6 +102,12 @@ $(IMAGE): $(IMAGE_SOURCES) .build-config
 	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) TTYFORCE_DEV=$(TTYFORCE_DEV) TTYFORCE_LATEST=$(TTYFORCE_LATEST) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) ${PWD}/make/image.sh $(IMAGE_SIZE) $(IMAGE)
 
 image: $(IMAGE)
+
+# Force the Arch-container build path regardless of host (install.sh runs inside
+# an x86_64 Arch container). On non-Arch hosts `make image` already dispatches
+# here automatically; this target also lets you force it on an Arch host.
+image-container: $(IMAGE_SOURCES) .build-config
+	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) TTYFORCE_DEV=$(TTYFORCE_DEV) TTYFORCE_LATEST=$(TTYFORCE_LATEST) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) ${PWD}/make/image-container.sh $(IMAGE_SIZE) $(IMAGE)
 
 compress-release:
 	sudo pv $(IMAGE) | lbzip2 > $(IMAGE).bz2 && rm -f $(IMAGE)

@@ -7,7 +7,8 @@ Arch-based disk image builder for Town OS. Produces a bootable raw image with a 
 ```sh
 make deps        # install host dependencies (Arch Linux)
 make deps-debian # install host dependencies (Debian/Ubuntu)
-make image       # build image only (requires root, Arch host)
+make image       # build image (native on Arch, x86_64 Arch container elsewhere)
+make image-container # force the Arch-container build path on any host
 make             # build image and launch VM
 make qemu-fg     # build and launch QEMU with serial console attached
 make serial      # attach to running QEMU serial console (Ctrl-] to disconnect)
@@ -33,18 +34,31 @@ Image building requires Arch-specific tools (`pacstrap`, `mkinitcpio`, `arch-chr
 
 ```sh
 make deps-debian
+make image       # builds automatically inside an x86_64 Arch container
+make qemu-fg
 ```
 
-To build images on Debian/Ubuntu, use an Arch Linux container or build on an Arch host and transfer the image.
+On non-Arch hosts `make image` transparently runs the build inside an x86_64 Arch container (see [Container Image Builds](#container-image-builds)).
 
 ### Fedora Setup (incl. Asahi Remix)
 
-`make deps` auto-detects Fedora (and RHEL/CentOS/Rocky/AlmaLinux) and installs host dependencies via `dnf`. As with Debian, image building requires Arch-specific tools (`pacstrap`, `mkinitcpio`, `arch-chroot`) — build in an Arch container or on an Arch host and transfer the image. The VM scripts run `qemu-system-x86_64`, so on aarch64 hosts (e.g. Fedora Asahi Remix on Apple Silicon) the x86_64 image runs under QEMU emulation:
+`make deps` auto-detects Fedora (and RHEL/CentOS/Rocky/AlmaLinux) and installs host dependencies via `dnf`. Image building uses Arch-specific tools (`pacstrap`, `mkinitcpio`, `arch-chroot`), so on non-Arch hosts `make image` automatically builds inside an x86_64 Arch container — no manual container/transfer step. The VM scripts run `qemu-system-x86_64`, so on aarch64 hosts (e.g. Fedora Asahi Remix on Apple Silicon) both the build and the VM run as x86_64 under emulation:
 
 ```sh
 make deps
+make image       # builds inside an x86_64 Arch container (x86_64 via FEX/qemu)
 make qemu-fg
 ```
+
+### Container Image Builds
+
+`make/install.sh` needs Arch-only tools (`pacstrap`, `arch-chroot`, `genfstab`, `mkinitcpio`), and the Town OS image is x86_64 (grub `x86_64-efi`/`i386-pc`, x86_64 kernel modules and rust binaries). On **non-Arch hosts**, `make/image.sh` detects the distro (via `/etc/os-release` `ID`) and dispatches to `make/image-container.sh`, which runs the **unmodified `install.sh`** inside an x86_64 Arch container built from `make/Containerfile.build`. The repo is bind-mounted at `/build`, so the finished image is written back to the repo dir on the host. `make image-container` forces this path on any host (including Arch).
+
+- **x86_64 emulation:** On aarch64 hosts the container's x86_64 binaries execute via whatever x86_64 emulation the host already provides (FEX-Emu on Fedora Asahi Remix, `qemu-user-static` elsewhere); on x86_64 non-Arch hosts the container runs natively. A full x86_64 Arch container supplies its own x86_64 userspace, so `fex-emu-rootfs` is **not** required. **The build never inspects, registers, or otherwise touches `binfmt_misc`.** Emulation is the host's responsibility (set up by the normal qemu-user-static/FEX package install); our scripts must not preflight, install, or configure binfmt handlers. If x86_64 emulation isn't available on a given host, the container build simply isn't supported there — that's not a condition our scripts police.
+- **Privilege/devices:** the container runs rootful (`sudo podman run`) and `--privileged --cgroupns=host` because `install.sh` uses loopback (`losetup --partscan`), `mount`, and a nested `podman` systemd container (`town-build`). Rootless podman cannot create loop devices, so this must be rootful.
+- **Nested podman:** the build-time `town-build` systemd container (used to enable units via `busctl`) becomes podman-in-podman. The builder image (`Containerfile.build`) sets podman to `vfs` storage + `cgroupfs` cgroup manager to keep that step reliable under emulation.
+- **Performance:** compiling charon + ttyforce (rust) and running `mkinitcpio` under x86_64 emulation is slow (tens of minutes+). FEX is much faster than qemu-user, but it is still emulation.
+- Downstream targets (`qemu`, `qemu-fg`, `flash`, `run`) all funnel through the `$(IMAGE)` rule → `image.sh`, so they inherit the container build path automatically.
 
 ### Host Dependencies
 
@@ -74,6 +88,9 @@ make qemu-fg
 
 ```
 make/install.sh         # Main build script — partitions, pacstraps, installs GRUB
+make/image.sh           # Build dispatcher — native on Arch, else Arch container
+make/image-container.sh # Runs install.sh inside an x86_64 Arch container (non-Arch hosts)
+make/Containerfile.build # Builder image: x86_64 Arch + host-side build tools
 scripts/configure.sh    # Runs inside chroot — installs rust binaries, configures systemd
 town-os.yaml            # Build config (storage_backend, btrfs_raid_mode, vm_disk_size)
 make/                   # Helper scripts for each Makefile target
