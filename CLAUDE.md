@@ -7,8 +7,8 @@ Arch-based disk image builder for Town OS. Produces a bootable raw image with a 
 ```sh
 make deps        # install host dependencies (Arch Linux)
 make deps-debian # install host dependencies (Debian/Ubuntu)
-make image       # build image (native on Arch, x86_64 Arch container elsewhere)
-make image-container # force the Arch-container build path on any host
+make image       # build image (native on Arch, same-arch Arch container elsewhere)
+make image-container # force the same-arch Arch container build path on any host
 make             # build image and launch VM
 make qemu-fg     # build and launch QEMU with serial console attached
 make serial      # attach to running QEMU serial console (Ctrl-] to disconnect)
@@ -34,31 +34,32 @@ Image building requires Arch-specific tools (`pacstrap`, `mkinitcpio`, `arch-chr
 
 ```sh
 make deps-debian
-make image       # builds automatically inside an x86_64 Arch container
+make image       # builds automatically inside a same-arch Arch container
 make qemu-fg
 ```
 
-On non-Arch hosts `make image` transparently runs the build inside an x86_64 Arch container (see [Container Image Builds](#container-image-builds)).
+On non-Arch hosts `make image` transparently runs the build inside a same-architecture Arch container (see [Container Image Builds](#container-image-builds)). The produced image is this host's architecture — there is no cross-build.
 
 ### Fedora Setup (incl. Asahi Remix)
 
-`make deps` auto-detects Fedora (and RHEL/CentOS/Rocky/AlmaLinux) and installs host dependencies via `dnf`. Image building uses Arch-specific tools (`pacstrap`, `mkinitcpio`, `arch-chroot`), so on non-Arch hosts `make image` automatically builds inside an x86_64 Arch container — no manual container/transfer step. The VM scripts run `qemu-system-x86_64`, so on aarch64 hosts (e.g. Fedora Asahi Remix on Apple Silicon) both the build and the VM run as x86_64 under emulation:
+`make deps` auto-detects Fedora (and RHEL/CentOS/Rocky/AlmaLinux) and installs host dependencies via `dnf`. Image building uses Arch-specific tools (`pacstrap`, `mkinitcpio`, `arch-chroot`), so on non-Arch hosts `make image` automatically builds inside a **same-architecture** Arch container — no manual container/transfer step, no emulation. On aarch64 hosts (e.g. Fedora Asahi Remix on Apple Silicon) the build runs as native aarch64 and produces an aarch64 image:
 
 ```sh
 make deps
-make image       # builds inside an x86_64 Arch container (x86_64 via FEX/qemu)
+make image       # builds inside a same-arch (aarch64) Arch container, native speed
 make qemu-fg
 ```
 
 ### Container Image Builds
 
-`make/install.sh` needs Arch-only tools (`pacstrap`, `arch-chroot`, `genfstab`, `mkinitcpio`), and the Town OS image is x86_64 (grub `x86_64-efi`/`i386-pc`, x86_64 kernel modules and rust binaries). On **non-Arch hosts**, `make/image.sh` detects the distro (via `/etc/os-release` `ID`) and dispatches to `make/image-container.sh`, which runs the **unmodified `install.sh`** inside an x86_64 Arch container built from `make/Containerfile.build`. The repo is bind-mounted at `/build`, so the finished image is written back to the repo dir on the host. `make image-container` forces this path on any host (including Arch).
+`make/install.sh` needs Arch-only tools (`pacstrap`, `arch-chroot`, `genfstab`, `mkinitcpio`). On **non-Arch hosts**, `make/image.sh` detects the distro (via `/etc/os-release` `ID`) and dispatches to `make/image-container.sh`, which runs the **unmodified `install.sh`** inside a **same-architecture** Arch container built from `make/Containerfile.build`. The repo is bind-mounted at `/build`, so the finished image is written back to the repo dir on the host. `make image-container` forces this path on any host (including Arch).
 
-- **x86_64 emulation:** On aarch64 hosts the container's x86_64 binaries execute via whatever x86_64 emulation the host already provides (FEX-Emu on Fedora Asahi Remix, `qemu-user-static` elsewhere); on x86_64 non-Arch hosts the container runs natively. A full x86_64 Arch container supplies its own x86_64 userspace, so `fex-emu-rootfs` is **not** required. **The build never inspects, registers, or otherwise touches `binfmt_misc`.** Emulation is the host's responsibility (set up by the normal qemu-user-static/FEX package install); our scripts must not preflight, install, or configure binfmt handlers. If x86_64 emulation isn't available on a given host, the container build simply isn't supported there — that's not a condition our scripts police.
+- **Always native, never emulated:** the builder container is the host's native architecture (no `--arch`), so it runs at native CPU speed and the produced image's architecture equals the host's. The container exists only to supply Arch's build tooling on a non-Arch distro — it is **not** for cross-building. **The build never inspects, registers, or otherwise touches `binfmt_misc`, and never uses CPU emulation.** If you want a different-architecture image, run the build on a host of that architecture.
+- **Base image by architecture:** `image-container.sh` picks the base via `uname -m` — `docker.io/library/archlinux` on x86_64, the third-party `docker.io/menci/archlinuxarm` on aarch64 (the official Arch image is x86_64-only). It is passed to `Containerfile.build` as the `BASE_IMAGE` build ARG. Override with the `BASE_IMAGE` **environment variable**, e.g. `BASE_IMAGE=docker.io/lopsided/archlinux make image` (it flows through `make` → `image.sh` → `image-container.sh` via the environment; no Makefile wiring needed).
+- **Architecture in `install.sh`:** `install.sh` selects the kernel package (`linux618` on x86_64, `linux-aarch64` on aarch64), the GRUB target (`x86_64-efi`+`i386-pc` BIOS on x86_64, `arm64-efi` only on aarch64), and the `bios_grub` partition flag (x86_64 only) from `uname -m`. The 1 MiB BIOS-boot partition is still created on aarch64 (unused) to keep partition numbering identical. **zfs is x86_64-only** — there is no prebuilt `linux-aarch64-zfs` module package (aarch64 ZFS would need `zfs-dkms`), so `install.sh` errors if `storage_backend: zfs` on aarch64.
 - **Privilege/devices:** the container runs rootful (`sudo podman run`) and `--privileged --cgroupns=host` because `install.sh` uses loopback (`losetup --partscan`), `mount`, and a nested `podman` systemd container (`town-build`). Rootless podman cannot create loop devices, so this must be rootful.
-- **Nested podman:** the build-time `town-build` systemd container (used to enable units via `busctl`) becomes podman-in-podman. The builder image (`Containerfile.build`) sets podman to `vfs` storage + `cgroupfs` cgroup manager to keep that step reliable under emulation.
-- **Performance:** compiling charon + ttyforce (rust) and running `mkinitcpio` under x86_64 emulation is slow (tens of minutes+). FEX is much faster than qemu-user, but it is still emulation.
-- Downstream targets (`qemu`, `qemu-fg`, `flash`, `run`) all funnel through the `$(IMAGE)` rule → `image.sh`, so they inherit the container build path automatically.
+- **Nested podman:** the build-time `town-build` systemd container (used to enable units via `busctl`) becomes podman-in-podman. The builder image (`Containerfile.build`) sets podman to `vfs` storage + `cgroupfs` cgroup manager to keep that step reliable.
+- Downstream targets (`qemu`, `qemu-fg`, `flash`, `run`) all funnel through the `$(IMAGE)` rule → `image.sh`, so they inherit the build path automatically.
 
 ### Host Dependencies
 
@@ -83,14 +84,15 @@ make qemu-fg
 | `TTYFORCE_DEV` | *(empty)* | Set non-empty to install ttyforce from git instead of crates.io |
 | `TTYFORCE_LATEST` | *(empty)* | Set non-empty to install the latest ttyforce from crates.io (ignores version pin) |
 | `KEEP_MOUNT` | *(empty)* | Skip unmount after install for debugging |
+| `BASE_IMAGE` | *(arch default)* | Override the same-arch Arch base image for the container build (`docker.io/library/archlinux` on x86_64, `docker.io/menci/archlinuxarm` on aarch64). Environment variable. |
 
 ## Project Layout
 
 ```
 make/install.sh         # Main build script — partitions, pacstraps, installs GRUB
-make/image.sh           # Build dispatcher — native on Arch, else Arch container
-make/image-container.sh # Runs install.sh inside an x86_64 Arch container (non-Arch hosts)
-make/Containerfile.build # Builder image: x86_64 Arch + host-side build tools
+make/image.sh           # Build dispatcher — native on Arch, else same-arch Arch container
+make/image-container.sh # Runs install.sh inside a same-arch Arch container (non-Arch hosts)
+make/Containerfile.build # Builder image: same-arch Arch base (BASE_IMAGE ARG) + host-side build tools
 scripts/configure.sh    # Runs inside chroot — installs rust binaries, configures systemd
 town-os.yaml            # Build config (storage_backend, btrfs_raid_mode, vm_disk_size)
 make/                   # Helper scripts for each Makefile target
@@ -166,6 +168,7 @@ All systemd operations MUST use D-Bus (`busctl`) instead of the `systemctl` CLI.
 - **Service restart resilience**: Systemd services that depend on network (e.g. systemcontroller pulling container images) must use `StartLimitIntervalSec=0` to disable the start rate limit, and a reasonable `RestartSec` (e.g. 5s) to avoid spamming. Without this, systemd's default rate limit (5 starts in 10s) permanently stops restarting the service if the network isn't ready yet (e.g. DNS unavailable before rolodex is running).
 - **Container image pull policy**: Both the systemcontroller and rolodex services MUST use `--pull=always` so that container images are re-pulled on every (re)start. This ensures updates are picked up without manual intervention.
 - **Podman API socket for the systemcontroller**: `town-os-podman-api.service` runs `podman system service -t 0 unix:///run/podman/podman.sock` as a long-running process (not socket-activated) so the host's podman REST API is always reachable. The systemcontroller container `Requires=` and `After=` this unit, and bind-mounts the socket (`-v /run/podman/podman.sock:/run/podman/podman.sock`) so it can drive sibling containers via the host podman. The host podman's graphroot remains `/town-os/containers` (set in `/etc/containers/storage.conf`), so all images and containers managed via the socket land on the persistent btrfs. The systemcontroller also bind-mounts `/var/lib/containers:/var/lib/containers:shared`; note that this is **not** the host graphroot — `/var/lib/containers` lives on the btrfs-backed `/var` overlay and is exposed as a separate persistent path distinct from `/town-os/containers`. The `:shared` propagation lets nested mounts under that path become visible across the bind in both directions. The systemcontroller's `ExecStartPre` `mkdir -p /var/lib/containers` ensures the host directory exists before podman creates the bind.
+- **Always native builds; never cross-arch, never emulation, never binfmt**: The image architecture ALWAYS equals the build host's (or same-arch builder container's) architecture — x86_64 host → x86_64 image, aarch64 host → aarch64 image. The build MUST NEVER cross-compile, run under CPU emulation, or inspect/register/configure `binfmt_misc`. Non-Arch hosts build inside a **same-architecture** Arch container only (it supplies Arch's `pacstrap`/`mkinitcpio`, nothing more). To produce an image for a different architecture, build on a host of that architecture. `install.sh` keys all arch-specific choices (kernel package, GRUB target, BIOS partition) off `uname -m`.
 - **No host side effects**: Build and VM tasks (image, qemu, qemu-fg, run) MUST NOT install packages, modify host services, or touch the host's package manager. The `deps` target is manual-only and must never be a dependency of other targets. `pacstrap` inside `make/install.sh` uses the host's pacman database (unavoidable), but no other host state should be modified during builds.
 - **NEVER run image builds or flash commands**: Claude MUST NOT run `make image`, `make flash`, `make qemu-fg`, `make qemu`, `make run`, `sudo make`, or any command that builds images or writes to USB devices. These are destructive, long-running, require root, and must only be initiated by the user. Claude may edit source files, Makefile rules, and scripts, but must leave building and flashing to the user.
 - **Image freshness**: `$(IMAGE)` depends on `IMAGE_SOURCES` (a wildcard of all scripts, systemd units, initcpio hooks, town-os.yaml, and Makefile) plus `.build-config` (a stamp file tracking build-relevant variables like `CONTROLLER_IMAGE`, `TTYFORCE_DEV`, etc.). Changing a source file or passing a different variable triggers an automatic rebuild when any target that depends on the image is invoked (flash, qemu, qemu-fg, run, virtualbox).

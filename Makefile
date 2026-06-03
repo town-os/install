@@ -24,8 +24,8 @@ help:
 	@echo 'Town OS Install — Makefile targets'
 	@echo
 	@echo 'Build:'
-	@echo '  image            Build the disk image (native on Arch, else Arch container)'
-	@echo '  image-container  Force the Arch-container build path (any host)'
+	@echo '  image            Build the disk image (native on Arch, else same-arch Arch container)'
+	@echo '  image-container  Force the same-arch Arch container build path (any host)'
 	@echo '  image-release    Build the image and compress it to .bz2'
 	@echo '  release          Build, compress, and publish a release'
 	@echo

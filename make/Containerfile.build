@@ -1,12 +1,14 @@
 # Builder image for Town OS disk images on non-Arch hosts.
 #
-# The Town OS image is x86_64 (grub x86_64-efi/i386-pc, x86_64 kernel modules and
-# rust binaries), and the build uses Arch-only tools (pacstrap, arch-chroot,
-# genfstab, mkinitcpio). This image layers those host-side tools onto x86_64 Arch
-# so the unmodified make/install.sh can run inside it. On aarch64 hosts (e.g.
-# Fedora Asahi Remix) the x86_64 binaries execute transparently via FEX-Emu /
-# qemu-user binfmt; on x86_64 hosts it runs natively.
-FROM docker.io/library/archlinux:latest
+# The build uses Arch-only tools (pacstrap, arch-chroot, genfstab, mkinitcpio).
+# This image layers those host-side tools onto an Arch base so the unmodified
+# make/install.sh can run inside it. The base image is the host's NATIVE
+# architecture (passed in via BASE_IMAGE by make/image-container.sh) — x86_64
+# Arch on x86_64 hosts, Arch Linux ARM on aarch64 hosts. The container always
+# runs natively (no --arch, no emulation, no binfmt), so the produced image is
+# the host's architecture.
+ARG BASE_IMAGE=docker.io/library/archlinux:latest
+FROM ${BASE_IMAGE}
 
 # Host-side tools install.sh shells out to (outside the chroot). Compilation
 # (rust/gcc) happens INSIDE the pacstrapped chroot via configure.sh, so
@@ -26,9 +28,9 @@ RUN pacman -Syu --noconfirm --needed \
       podman fuse-overlayfs crun \
  && pacman -Scc --noconfirm
 
-# Make the nested (podman-in-podman) town-build step reliable under emulation:
-# vfs storage avoids overlay-on-overlay, cgroupfs avoids systemd-cgroup
-# delegation issues inside the privileged build container.
+# Make the nested (podman-in-podman) town-build step reliable: vfs storage avoids
+# overlay-on-overlay, cgroupfs avoids systemd-cgroup delegation issues inside the
+# privileged build container.
 RUN mkdir -p /etc/containers \
  && printf '[storage]\ndriver = "vfs"\n' > /etc/containers/storage.conf \
  && printf '[engine]\ncgroup_manager = "cgroupfs"\n' >> /etc/containers/containers.conf

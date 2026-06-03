@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Build a Town OS disk image inside an x86_64 Arch Linux container.
+# Build a Town OS disk image inside a SAME-ARCHITECTURE Arch Linux container.
 #
 # Used on non-Arch hosts, where pacstrap/arch-chroot/mkinitcpio don't exist. The
-# unmodified make/install.sh runs inside the builder container (see
-# Containerfile.build); the finished image is written back to the repo on the
-# host. On aarch64 hosts the x86_64 build executes via whatever x86_64 emulation
-# the host already provides (FEX-Emu on Asahi, qemu-user-static elsewhere); this
-# script never inspects, registers, or configures binfmt — that is the host's job.
+# container is the host's native architecture (aarch64 Arch on aarch64, x86_64
+# Arch on x86_64) — it runs at native CPU speed, with NO emulation and NO binfmt.
+# It exists only to supply Arch's build tooling; the produced image is the host's
+# architecture. The unmodified make/install.sh runs inside the builder container
+# (see Containerfile.build); the finished image is written back to the repo on the
+# host.
 set -euo pipefail
 
 IMAGE_SIZE="${1:?Usage: image-container.sh IMAGE_SIZE IMAGE}"
@@ -15,8 +16,22 @@ IMAGE="${2:?Usage: image-container.sh IMAGE_SIZE IMAGE}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Build the builder image (amd64; podman layer cache makes repeat runs cheap).
-sudo podman build --arch amd64 -t town-os-builder \
+# Pick a same-architecture Arch base image. We never pass --arch, so podman uses
+# the host's native architecture for both build and run. The base image may be
+# overridden via the BASE_IMAGE environment variable
+# (e.g. `BASE_IMAGE=docker.io/lopsided/archlinux make image`), which is useful
+# when the default aarch64 Arch Linux ARM image isn't desired.
+if [ -z "${BASE_IMAGE:-}" ]; then
+  case "$(uname -m)" in
+    x86_64)  BASE_IMAGE="docker.io/library/archlinux:latest" ;;
+    aarch64) BASE_IMAGE="docker.io/menci/archlinuxarm:latest" ;;
+    *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+  esac
+fi
+echo "Using builder base image: ${BASE_IMAGE}"
+
+# Build the builder image natively (podman layer cache makes repeat runs cheap).
+sudo podman build --build-arg "BASE_IMAGE=${BASE_IMAGE}" -t town-os-builder \
   -f "$SCRIPT_DIR/Containerfile.build" "$SCRIPT_DIR"
 
 # Run the unmodified install.sh inside the container.
@@ -31,7 +46,7 @@ sudo \
   UI_IMAGE="${UI_IMAGE:-}" LOCAL_DNS="${LOCAL_DNS:-}" \
   TTYFORCE_DEV="${TTYFORCE_DEV:-}" TTYFORCE_LATEST="${TTYFORCE_LATEST:-}" \
   IMAGE_HOSTNAME="${IMAGE_HOSTNAME:-}" \
-  podman run --rm --privileged --cgroupns=host --arch amd64 \
+  podman run --rm --privileged --cgroupns=host \
   -v "$REPO_ROOT":/build -w /build \
   -e CONTROLLER_IMAGE -e ROLODEX_IMAGE -e UI_IMAGE -e LOCAL_DNS \
   -e TTYFORCE_DEV -e TTYFORCE_LATEST -e IMAGE_HOSTNAME \

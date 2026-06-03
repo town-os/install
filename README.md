@@ -19,6 +19,27 @@ This installs all dependencies, builds a disk image (~2.5 GB), auto-detects the
 available hypervisor (prefers QEMU, falls back to VirtualBox), and launches the
 VM in the background. When the VM is ready its IP address is printed.
 
+## Build host architecture
+
+Image builds are always **native**: the image architecture matches the build
+host. An x86_64 host produces an x86_64 image; an aarch64 host produces an
+aarch64 image. The build never cross-compiles or emulates another architecture.
+
+On non-Arch hosts (e.g. Fedora Asahi Remix), `make image` builds inside a
+**same-architecture** Arch container — native CPU speed, no emulation. The base
+container image differs by architecture:
+
+- **x86_64** uses the official `docker.io/library/archlinux` image.
+- **aarch64** uses the third-party `docker.io/menci/archlinuxarm` image, because
+  the official Arch image is x86_64-only. Arch Linux ARM ships the aarch64
+  `linux-aarch64` kernel from its standard repos.
+
+Override the base image with the `BASE_IMAGE` environment variable, e.g.:
+
+```
+BASE_IMAGE=docker.io/lopsided/archlinux make image
+```
+
 ## Multicast DNS (town-os.local)
 
 The VM advertises itself as `town-os.local` via systemd-resolved mDNS. To use a

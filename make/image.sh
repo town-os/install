@@ -13,8 +13,9 @@ export TTYFORCE_LATEST="${TTYFORCE_LATEST:-}"
 export IMAGE_HOSTNAME="${IMAGE_HOSTNAME:-}"
 
 # install.sh needs Arch-only tools (pacstrap, arch-chroot, genfstab, mkinitcpio).
-# On Arch hosts, build natively. On any other host, build inside an x86_64 Arch
-# container (see image-container.sh / Containerfile.build).
+# On Arch hosts, build natively. On any other host, build inside a same-arch Arch
+# container (native CPU, no emulation/binfmt — see image-container.sh /
+# Containerfile.build). Either way the image is the host's architecture.
 ID=""
 [ -f /etc/os-release ] && . /etc/os-release
 

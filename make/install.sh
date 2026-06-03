@@ -45,6 +45,27 @@ cleanup_mount() {
 IMAGE_SIZE=${1:-12G}
 IMAGE=${2:-image.raw}
 
+# Builds are always NATIVE: the image architecture equals the build host (or the
+# same-arch builder container) architecture. We never cross-build or emulate, so
+# `uname -m` is authoritative for which kernel package and GRUB target to use.
+ARCH="$(uname -m)"
+case "$ARCH" in
+  x86_64)
+    KERNEL_PKG="linux618"
+    KERNEL_ZFS_PKG="linux618-zfs"
+    GRUB_EFI_TARGET="x86_64-efi"
+    ;;
+  aarch64)
+    KERNEL_PKG="linux-aarch64"
+    KERNEL_ZFS_PKG=""          # no prebuilt zfs kernel module package on aarch64
+    GRUB_EFI_TARGET="arm64-efi"
+    ;;
+  *)
+    echo "Unsupported build architecture: $ARCH (expected x86_64 or aarch64)" >&2
+    exit 1
+    ;;
+esac
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -87,10 +108,15 @@ DEVICE=$(losetup -j "$IMAGE" | awk -F: '{ print $1 }' | head -1)
 print_info "Creating GPT partition table..."
 parted -s "$DEVICE" mklabel gpt
 
-# Part1: BIOS boot partition (raw, for GRUB core image embed only — no filesystem)
+# Part1: BIOS boot partition (raw, for GRUB core image embed only — no filesystem).
+# The partition is created on every arch to keep partition numbering identical
+# (PART1/PART2/PART3), but the bios_grub flag and BIOS GRUB only apply to x86_64
+# — aarch64 is UEFI-only and never uses this partition.
 print_info "Creating BIOS boot partition..."
 parted -s "$DEVICE" mkpart grub 1MiB 2MiB
-parted -s "$DEVICE" set 1 bios_grub on
+if [ "$ARCH" = "x86_64" ]; then
+  parted -s "$DEVICE" set 1 bios_grub on
+fi
 
 # Part2: EFI System Partition
 print_info "Creating EFI System Partition..."
@@ -127,11 +153,15 @@ mkdir -p "$MOUNT_POINT/boot/efi"
 mount "$PART2" "$MOUNT_POINT/boot/efi"
 
 BASE_UTILS="inetutils iputils traceroute bind less vim nano which file tree psmisc lsof strace tcpdump openbsd-netcat rsync tmux jq htop bash-completion"
-PACKAGES="base base-devel clang linux618 linux-firmware podman efibootmgr grub openssh dhcpcd parted wpa_supplicant iw wireless_tools curl $BASE_UTILS"
+PACKAGES="base base-devel clang $KERNEL_PKG linux-firmware podman efibootmgr grub openssh dhcpcd parted wpa_supplicant iw wireless_tools curl $BASE_UTILS"
 
 if [ "$STORAGE_BACKEND" = "zfs" ]
 then
-  PACKAGES="$PACKAGES linux618-zfs"
+  if [ -z "$KERNEL_ZFS_PKG" ]; then
+    echo "zfs storage backend is not supported on $ARCH (no $KERNEL_PKG zfs package)" >&2
+    exit 1
+  fi
+  PACKAGES="$PACKAGES $KERNEL_ZFS_PKG"
 else
   PACKAGES="$PACKAGES btrfs-progs"
   if [ "$BTRFS_RAID_MODE" = "mdadm" ]
@@ -300,16 +330,22 @@ EOF
 # Initialize grubenv so \`grub-reboot\` / \`load_env\` have a file to read/write
 chroot_cmd grub-editenv /boot/grub/grubenv create
 
-chroot_cmd grub-install --target=x86_64-efi \
+# UEFI GRUB (both arches). --removable writes the firmware fallback binary
+# (BOOTX64.EFI on x86_64, BOOTAA64.EFI on aarch64) so the image boots without
+# an NVRAM entry — required for removable media / fresh VMs.
+chroot_cmd grub-install --target="$GRUB_EFI_TARGET" \
     --efi-directory="/boot/efi" \
     --boot-directory="/boot" \
     --removable \
     --recheck $DEVICE
 
-chroot_cmd grub-install --target=i386-pc \
-    --boot-directory="/boot" \
-    --recheck \
-    "$DEVICE"
+# BIOS (legacy) GRUB is x86-only; aarch64 has no BIOS firmware.
+if [ "$ARCH" = "x86_64" ]; then
+  chroot_cmd grub-install --target=i386-pc \
+      --boot-directory="/boot" \
+      --recheck \
+      "$DEVICE"
+fi
 
 # --- Build squashfs image ---
 print_info "Building squashfs root image..."
