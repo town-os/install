@@ -28,6 +28,24 @@ RUN pacman -Syu --noconfirm --needed \
       podman fuse-overlayfs crun \
  && pacman -Scc --noconfirm
 
+# Pre-fetch (download only, -w) the base system packages that make/install.sh
+# pacstraps, and STAMP them into this image's pacman cache (no -Scc afterwards).
+# install.sh runs `pacstrap -Kc`, where -c makes pacstrap use this cache, so the
+# base packages are not downloaded again on every `make image` — the cost is paid
+# once and reused via the cached image layer. base-packages.txt is the shared
+# source of truth with install.sh. The arch kernel and storage packages are
+# fetched best-effort (the x86_64 `linux618` lives in an out-of-tree repo that
+# isn't configured here, so a miss there is non-fatal).
+COPY base-packages.txt /tmp/base-packages.txt
+RUN pacman -Sy --noconfirm \
+ && pacman -Syw --noconfirm --needed \
+      $(grep -vE '^[[:space:]]*(#|$)' /tmp/base-packages.txt) btrfs-progs mdadm \
+ ; case "$(uname -m)" in \
+     x86_64)  pacman -Syw --noconfirm --needed linux618 linux618-zfs || true ;; \
+     aarch64) pacman -Syw --noconfirm --needed linux-aarch64 || true ;; \
+   esac \
+ ; rm -f /tmp/base-packages.txt
+
 # Make the nested (podman-in-podman) town-build step reliable: vfs storage avoids
 # overlay-on-overlay, cgroupfs avoids systemd-cgroup delegation issues inside the
 # privileged build container.

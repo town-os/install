@@ -12,6 +12,11 @@ sudo apt-get install -y \
   qemu-system-x86 qemu-utils socat lbzip2 pv podman \
   dbus util-linux
 
+# Ensure the host loop module exposes partition nodes for the image build.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+. "$SCRIPT_DIR/deps-loop.sh"
+ensure_loop_partitions
+
 sudo busctl call org.freedesktop.systemd1 /org/freedesktop/systemd1 \
   org.freedesktop.systemd1.Manager EnableUnitFiles "asbb" 1 "libvirtd.service" false false
 sudo busctl call org.freedesktop.systemd1 /org/freedesktop/systemd1 \

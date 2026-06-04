@@ -152,8 +152,11 @@ mount "$PART3" "$MOUNT_POINT"
 mkdir -p "$MOUNT_POINT/boot/efi"
 mount "$PART2" "$MOUNT_POINT/boot/efi"
 
-BASE_UTILS="inetutils iputils traceroute bind less vim nano which file tree psmisc lsof strace tcpdump openbsd-netcat rsync tmux jq htop bash-completion"
-PACKAGES="base base-devel clang $KERNEL_PKG linux-firmware podman efibootmgr grub openssh dhcpcd parted wpa_supplicant iw wireless_tools curl $BASE_UTILS"
+# Base package set lives in make/base-packages.txt (single source of truth shared
+# with make/Containerfile.build, which pre-fetches them into the builder image
+# cache so pacstrap doesn't re-download them every build). Strip comments/blanks.
+BASE_PACKAGES="$(grep -vE '^[[:space:]]*(#|$)' ./make/base-packages.txt | tr '\n' ' ')"
+PACKAGES="$BASE_PACKAGES $KERNEL_PKG"
 
 if [ "$STORAGE_BACKEND" = "zfs" ]
 then
@@ -169,6 +172,11 @@ else
     PACKAGES="$PACKAGES mdadm"
   fi
 fi
+
+# Refresh the package databases so pacstrap installs current versions even when
+# the (cached) builder image — and the package cache stamped into it — is old.
+# The stamped cache still serves unchanged packages; only updated ones download.
+pacman -Sy --noconfirm
 
 pacstrap -Kc $MOUNT_POINT $PACKAGES
 

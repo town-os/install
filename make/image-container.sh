@@ -36,7 +36,14 @@ sudo podman build --build-arg "BASE_IMAGE=${BASE_IMAGE}" -t town-os-builder \
 
 # Run the unmodified install.sh inside the container.
 #   --privileged + --cgroupns=host: loopback (losetup --partscan), mount, and the
-#     nested town-build systemd container all need real /dev access and cgroups.
+#     nested town-build systemd container all need real device access and cgroups.
+#     (--privileged already grants the full capability set and all host devices,
+#     so an explicit --cap-add=ALL would be redundant.)
+#   -v /dev:/dev: share the host's devtmpfs so the partition nodes that
+#     `losetup --partscan` creates (/dev/loopNp1..p3) are visible inside the
+#     container. Without this, podman gives the container a private /dev and the
+#     loop partition nodes never appear, so install.sh's wait for ${DEVICE}p3
+#     times out and the subsequent mkfs on the partitions fails.
 #   -v REPO_ROOT:/build -w /build: install.sh uses ./relative paths and writes
 #     $IMAGE to the cwd, so the finished image lands in the repo dir on the host.
 # Build vars are forwarded explicitly across the sudo boundary (never sudo -E),
@@ -47,6 +54,7 @@ sudo \
   TTYFORCE_DEV="${TTYFORCE_DEV:-}" TTYFORCE_LATEST="${TTYFORCE_LATEST:-}" \
   IMAGE_HOSTNAME="${IMAGE_HOSTNAME:-}" \
   podman run --rm --privileged --cgroupns=host \
+  -v /dev:/dev \
   -v "$REPO_ROOT":/build -w /build \
   -e CONTROLLER_IMAGE -e ROLODEX_IMAGE -e UI_IMAGE -e LOCAL_DNS \
   -e TTYFORCE_DEV -e TTYFORCE_LATEST -e IMAGE_HOSTNAME \
