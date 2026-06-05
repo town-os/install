@@ -113,7 +113,7 @@ Override on the command line, e.g. `make qemu VM_MEMORY=8G`.
 
 | Variable           | Default                          | Description                              |
 |--------------------|----------------------------------|------------------------------------------|
-| `IMAGE`            | `image.raw`                      | Output image filename                    |
+| `IMAGE`            | `town-os-<date>-<arch>.img`      | Output image filename (arch from `uname -m`) |
 | `IMAGE_SIZE`       | `12G`                            | Size of the raw disk image               |
 | `CONTROLLER_BASE`  | `quay.io/town/town`              | Controller image repository (no tag)      |
 | `CONTROLLER_TAG`   | `rc.latest`                      | Controller image tag (composed onto base) |

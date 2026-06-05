@@ -1,5 +1,8 @@
 BUILD_DATE       := $(shell date +%Y-%m-%d)
-IMAGE            ?= town-os-$(BUILD_DATE).img
+# Builds are always native, so the host arch (uname -m) is the image arch. Tag
+# the filename with it so x86_64 and aarch64 images don't get confused.
+BUILD_ARCH       := $(shell uname -m)
+IMAGE            ?= town-os-$(BUILD_DATE)-$(BUILD_ARCH).img
 IMAGE_SIZE       ?= 12G
 CONTROLLER_BASE  ?= quay.io/town/town
 CONTROLLER_TAG   ?= rc.latest
