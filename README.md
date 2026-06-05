@@ -228,7 +228,7 @@ The install script performs the following steps:
 
 4. **Configure the system** — Inside the chroot the configure script:
    - Sets the root password, locale, timezone, and hostname (`town-os`).
-   - Installs the Charon control-plane binary from source via Cargo.
+   - Builds and installs the ttyforce provisioning TUI from source via Cargo.
    - Enables systemd services: storage provisioning, the system controller
      (container image set by `CONTROLLER_IMAGE`), the UI (container image set
      by `UI_IMAGE`), networkd, and resolved (with mDNS).

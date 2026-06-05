@@ -24,16 +24,34 @@ echo LANG=en_US.UTF-8 >/etc/locale.conf
 echo KEYMAP=us >/etc/vconsole.conf
 echo "${IMAGE_HOSTNAME:-town-os}" >/etc/hostname
 
-# Configure mkinitcpio for squashfs boot
+# Configure mkinitcpio for squashfs boot.
 # Remove autodetect — it strips modules to only those found on the build host
-# (a loopback in a chroot), so USB/AHCI/SCSI drivers would be missing at boot
+# (a loopback in a chroot), so USB/AHCI/SCSI drivers would be missing at boot.
+#
+# The wishlist below spans x86 and arm hardware. Some drivers don't exist for
+# every kernel/arch (e.g. Intel `ice`, Broadcom `bnxt_en` are absent from the
+# aarch64 kernel), and mkinitcpio treats a listed-but-missing module as a HARD
+# ERROR (non-zero exit), which fails the whole build. So filter the wishlist down
+# to modules actually present for the installed kernel before writing MODULES=.
+WANT_MODULES="loop overlay squashfs zstd nf_tables ahci sd_mod virtio_blk virtio_scsi nvme usb_storage uas e1000 e1000e igb ixgbe i40e ice virtio_net r8169 tg3 bnxt_en mlx4_en mlx5_core cfg80211 mac80211 iwlwifi iwlmvm ath9k ath10k_pci ath11k_pci brcmfmac mt76x2u rtw88_pci rtw89_pci"
+KVER="$(ls -1 /usr/lib/modules | head -1)"
+HAVE_MODULES=""
+for m in $WANT_MODULES; do
+  if modinfo -k "$KVER" "$m" >/dev/null 2>&1; then
+    HAVE_MODULES="$HAVE_MODULES $m"
+  else
+    echo "mkinitcpio: skipping module not present for kernel $KVER: $m"
+  fi
+done
+HAVE_MODULES="$(echo $HAVE_MODULES)"  # collapse leading/duplicate whitespace
+
 sed -i \
   -e 's/^HOOKS=.*/HOOKS=(base udev modconf kms keyboard keymap consolefont block filesystems fsck town-installer town-squashfs)/' \
-  -e 's/^MODULES=.*/MODULES=(loop overlay squashfs zstd nf_tables ahci sd_mod virtio_blk virtio_scsi nvme usb_storage uas e1000 e1000e igb ixgbe i40e ice virtio_net r8169 tg3 bnxt_en mlx4_en mlx5_core cfg80211 mac80211 iwlwifi iwlmvm ath9k ath10k_pci ath11k_pci brcmfmac mt76x2u rtw88_pci rtw89_pci)/' \
+  -e "s/^MODULES=.*/MODULES=($HAVE_MODULES)/" \
   /etc/mkinitcpio.conf
 
 curl -sSL sh.rustup.rs >boot-rustup && chmod +x boot-rustup && ./boot-rustup -y && rm boot-rustup
-source $HOME/.cargo/env && cargo install --git https://gitea.com/town-os/control-plane charon && mv /root/.cargo/bin/charon /usr/bin
+source $HOME/.cargo/env
 
 # Install ttyforce — interactive installer TUI for network + disk provisioning
 if [ -n "${TTYFORCE_DEV:-}" ]; then

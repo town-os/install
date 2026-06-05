@@ -288,8 +288,13 @@ print_info "Installing GRUB bootloader..."
 mkdir -p "$MOUNT_POINT/boot/grub"
 DATA_UUID=$(blkid -s UUID -o value "$PART3")
 
-# Detect kernel and initramfs filenames
-KERNEL=$(basename $(ls "$MOUNT_POINT"/boot/vmlinuz-* | head -1))
+# Detect kernel and initramfs filenames. The kernel image name is arch-specific:
+# x86_64 installs /boot/vmlinuz-<pkg>; Arch Linux ARM's linux-aarch64 installs the
+# raw ARM64 kernel as /boot/Image. GRUB's arm64-efi `linux` command boots Image.
+case "$ARCH" in
+  x86_64)  KERNEL=$(basename $(ls "$MOUNT_POINT"/boot/vmlinuz-* | head -1)) ;;
+  aarch64) KERNEL=$(basename $(ls "$MOUNT_POINT"/boot/Image | head -1)) ;;
+esac
 INITRD=$(basename $(ls "$MOUNT_POINT"/boot/initramfs-*.img | grep -v fallback | head -1))
 
 # Write grub.cfg directly — grub-mkconfig can't resolve UUIDs correctly

@@ -48,7 +48,10 @@ RUN pacman -Sy --noconfirm \
 
 # Make the nested (podman-in-podman) town-build step reliable: vfs storage avoids
 # overlay-on-overlay, cgroupfs avoids systemd-cgroup delegation issues inside the
-# privileged build container.
-RUN mkdir -p /etc/containers \
+# privileged build container. Use a containers.conf.d drop-in for the engine
+# setting rather than appending to /etc/containers/containers.conf — some base
+# images (e.g. menci/archlinuxarm) already define an [engine] table there, and a
+# second one is a duplicate-key TOML error that breaks podman entirely.
+RUN mkdir -p /etc/containers/containers.conf.d \
  && printf '[storage]\ndriver = "vfs"\n' > /etc/containers/storage.conf \
- && printf '[engine]\ncgroup_manager = "cgroupfs"\n' >> /etc/containers/containers.conf
+ && printf '[engine]\ncgroup_manager = "cgroupfs"\n' > /etc/containers/containers.conf.d/00-town-build.conf
