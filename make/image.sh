@@ -11,6 +11,7 @@ export LOCAL_DNS="${LOCAL_DNS:-}"
 export TTYFORCE_DEV="${TTYFORCE_DEV:-}"
 export TTYFORCE_LATEST="${TTYFORCE_LATEST:-}"
 export IMAGE_HOSTNAME="${IMAGE_HOSTNAME:-}"
+export SERIAL_CONSOLE="${SERIAL_CONSOLE:-}"
 
 # install.sh needs Arch-only tools (pacstrap, arch-chroot, genfstab, mkinitcpio).
 # On Arch hosts, build natively. On any other host, build inside a same-arch Arch
@@ -25,6 +26,7 @@ case "${ID:-}" in
       exec sudo CONTROLLER_IMAGE="${CONTROLLER_IMAGE}" ROLODEX_IMAGE="${ROLODEX_IMAGE}" \
         UI_IMAGE="${UI_IMAGE}" LOCAL_DNS="${LOCAL_DNS}" TTYFORCE_DEV="${TTYFORCE_DEV}" \
         TTYFORCE_LATEST="${TTYFORCE_LATEST}" IMAGE_HOSTNAME="${IMAGE_HOSTNAME}" \
+        SERIAL_CONSOLE="${SERIAL_CONSOLE}" \
         "${SCRIPT_DIR}/install.sh" "${IMAGE_SIZE}" "${IMAGE}"
     fi
     ;;

@@ -17,6 +17,9 @@ VM_BRIDGE   ?= virbr0
 VM_NAME     ?= town-os
 FOREGROUND  ?=
 LOCAL_DNS   ?=
+# When non-empty, the built image's GRUB defaults to the serial-console entry
+# (console=ttyS0,115200) so the machine boots headless with no keyboard/monitor.
+SERIAL_CONSOLE ?=
 
 .PHONY: help run run-release stop image image-release qemu qemu-fg \
         qemu-release virtualbox virtualbox-fg virtualbox-release \
@@ -66,6 +69,7 @@ help:
 	@echo '  IMAGE_SIZE=$(IMAGE_SIZE)        VM_DISK_SIZE=$(VM_DISK_SIZE)   VM_MEMORY=$(VM_MEMORY)'
 	@echo '  CONTROLLER_IMAGE=$(CONTROLLER_IMAGE)'
 	@echo '  IMAGE_HOSTNAME, LOCAL_DNS, TTYFORCE_DEV, TTYFORCE_LATEST, KEEP_MOUNT'
+	@echo '  SERIAL_CONSOLE   Set non-empty to default the image to a serial console (no keyboard)'
 
 rebuild-qemu: stop clean image qemu
 
@@ -90,6 +94,7 @@ FORCE:
 	  'TTYFORCE_LATEST=$(TTYFORCE_LATEST)' \
 	  'IMAGE_HOSTNAME=$(IMAGE_HOSTNAME)' \
 	  'LOCAL_DNS=$(LOCAL_DNS)' \
+	  'SERIAL_CONSOLE=$(SERIAL_CONSOLE)' \
 	  'IMAGE_SIZE=$(IMAGE_SIZE)' | cmp -s - $@ || \
 	printf '%s\n' \
 	  'CONTROLLER_IMAGE=$(CONTROLLER_IMAGE)' \
@@ -99,10 +104,11 @@ FORCE:
 	  'TTYFORCE_LATEST=$(TTYFORCE_LATEST)' \
 	  'IMAGE_HOSTNAME=$(IMAGE_HOSTNAME)' \
 	  'LOCAL_DNS=$(LOCAL_DNS)' \
+	  'SERIAL_CONSOLE=$(SERIAL_CONSOLE)' \
 	  'IMAGE_SIZE=$(IMAGE_SIZE)' > $@
 
 $(IMAGE): $(IMAGE_SOURCES) .build-config
-	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) TTYFORCE_DEV=$(TTYFORCE_DEV) TTYFORCE_LATEST=$(TTYFORCE_LATEST) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) ${PWD}/make/image.sh $(IMAGE_SIZE) $(IMAGE)
+	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) TTYFORCE_DEV=$(TTYFORCE_DEV) TTYFORCE_LATEST=$(TTYFORCE_LATEST) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) SERIAL_CONSOLE=$(SERIAL_CONSOLE) ${PWD}/make/image.sh $(IMAGE_SIZE) $(IMAGE)
 
 image: $(IMAGE)
 
@@ -110,7 +116,7 @@ image: $(IMAGE)
 # an x86_64 Arch container). On non-Arch hosts `make image` already dispatches
 # here automatically; this target also lets you force it on an Arch host.
 image-container: $(IMAGE_SOURCES) .build-config
-	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) TTYFORCE_DEV=$(TTYFORCE_DEV) TTYFORCE_LATEST=$(TTYFORCE_LATEST) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) ${PWD}/make/image-container.sh $(IMAGE_SIZE) $(IMAGE)
+	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) TTYFORCE_DEV=$(TTYFORCE_DEV) TTYFORCE_LATEST=$(TTYFORCE_LATEST) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) SERIAL_CONSOLE=$(SERIAL_CONSOLE) ${PWD}/make/image-container.sh $(IMAGE_SIZE) $(IMAGE)
 
 compress-release:
 	sudo pv $(IMAGE) | lbzip2 > $(IMAGE).bz2 && rm -f $(IMAGE)

@@ -4,6 +4,9 @@ set -xeou pipefail
 
 export DEBUG=${DEBUG:-}
 export KEEP_MOUNT=${KEEP_MOUNT:-}
+# When non-empty, GRUB defaults to the serial-console boot entry so the machine
+# comes up headless on ttyS0,115200 with no keyboard/monitor required.
+export SERIAL_CONSOLE=${SERIAL_CONSOLE:-}
 
 town_config() {
   grep "^${1}:" ./town-os.yaml | awk '{ print $2 }' | tr -d '"' | tr -d "'"
@@ -297,6 +300,17 @@ case "$ARCH" in
 esac
 INITRD=$(basename $(ls "$MOUNT_POINT"/boot/initramfs-*.img | grep -v fallback | head -1))
 
+# Default boot entry. The menu order below is: 0 = "Town OS" (console=tty0,
+# needs a keyboard/monitor), 1 = "Town OS (Serial Console)" (console=ttyS0).
+# When SERIAL_CONSOLE is set we default to the serial entry so the machine boots
+# headless on the serial port with no keyboard required.
+if [ -n "$SERIAL_CONSOLE" ]; then
+  GRUB_DEFAULT_ENTRY=1
+  print_info "Serial console requested: defaulting GRUB to the serial entry (ttyS0,115200)."
+else
+  GRUB_DEFAULT_ENTRY=0
+fi
+
 # Write grub.cfg directly — grub-mkconfig can't resolve UUIDs correctly
 # inside a loopback chroot, so we generate a known-correct config
 cat > "$MOUNT_POINT/boot/grub/grub.cfg" <<EOF
@@ -321,7 +335,7 @@ if [ "\${next_entry}" ] ; then
     set next_entry=
     save_env next_entry
 else
-    set default=0
+    set default=$GRUB_DEFAULT_ENTRY
 fi
 
 menuentry "Town OS" {
