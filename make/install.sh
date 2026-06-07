@@ -196,6 +196,18 @@ genfstab -U $MOUNT_POINT >> $MOUNT_POINT/etc/fstab
 # remount the overlay as ext4
 sed -i '\|[[:space:]]/[[:space:]]|d' $MOUNT_POINT/etc/fstab
 
+# Fix the /boot/efi entry. In the container build, genfstab -U can't resolve the
+# vfat partition's UUID (no udev/blkid cache) and falls back to the build-time
+# loopback path (e.g. /dev/loop10p2). That device never exists at runtime, so the
+# mount times out and boot drops to emergency mode. Replace it with the EFI
+# partition's real UUID (blkid direct-probe works, as it does for DATA_UUID), and
+# mark it nofail with a short device timeout so a missing/changed ESP can never
+# block boot.
+EFI_UUID=$(blkid -s UUID -o value "$PART2")
+sed -i '\|[[:space:]]/boot/efi[[:space:]]|d' $MOUNT_POINT/etc/fstab
+printf 'UUID=%s\t/boot/efi\tvfat\trw,relatime,nofail,x-systemd.device-timeout=5s\t0 2\n' \
+  "$EFI_UUID" >> $MOUNT_POINT/etc/fstab
+
 # Install initcpio hooks into the chroot
 cp ./initcpio/install/town-squashfs $MOUNT_POINT/usr/lib/initcpio/install/town-squashfs
 cp ./initcpio/hooks/town-squashfs $MOUNT_POINT/usr/lib/initcpio/hooks/town-squashfs
