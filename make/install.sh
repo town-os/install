@@ -390,14 +390,35 @@ print_info "Building squashfs root image..."
 # Unmount EFI before creating squashfs
 umount "$MOUNT_POINT/boot/efi"
 
-# Create squashfs from the rootfs, excluding /boot (it stays on Part3 for GRUB)
-mksquashfs "$MOUNT_POINT" /tmp/town-root.sfs -comp zstd -noappend -e boot
+# Create squashfs from the rootfs, excluding /boot (it stays on Part3 for GRUB).
+# Use gzip (zlib): squashfs zlib decompression is built into the kernel on every
+# arch, whereas zstd squashfs support (CONFIG_SQUASHFS_ZSTD / the zstd module) is
+# not present in the aarch64 kernel, so a zstd image fails to mount at boot there.
+# gzip keeps the compressor consistent across x86_64 and aarch64.
+mksquashfs "$MOUNT_POINT" /tmp/town-root.sfs -comp gzip -noappend -e boot
 
-# Remove everything from Part3 except /boot
-find "$MOUNT_POINT" -mindepth 1 -maxdepth 1 ! -name boot -exec rm -rf {} +
+# --- Rebuild the data filesystem cleanly from the final contents ---
+print_info "Rebuilding data filesystem from final contents..."
 
-# Place squashfs on the data partition alongside /boot
+# The data partition was mkfs'd at the full build size and pacstrapped with the
+# whole rootfs, so simply deleting the rootfs and running `resize2fs -M` leaves
+# ~1.2G of free space that resize2fs cannot reclaim — it is stranded by the
+# original 12G metadata/block-group layout. Instead, recreate the filesystem from
+# scratch containing ONLY the final content (root.sfs + /boot); a clean fs lays
+# the data out contiguously so the later `resize2fs -M` reaches the true minimum.
+# Stage /boot (root.sfs is still in /tmp), drop the dead uncompressed-kernel copy,
+# then mkfs preserving the label AND UUID so the already-written grub.cfg
+# (search --fs-uuid / root=UUID=$DATA_UUID) and the /boot bind-mount still resolve.
+rm -f "$MOUNT_POINT/boot/Image.gz"   # GRUB boots /boot/Image; the .gz copy is unused (aarch64)
+STAGE=$(mktemp -d)
+cp -a "$MOUNT_POINT/boot" "$STAGE/boot"
+umount "$MOUNT_POINT"
+
+mkfs.ext4 -F -q -L TOWN_DATA -U "$DATA_UUID" "$PART3"
+mount "$PART3" "$MOUNT_POINT"
+cp -a "$STAGE/boot" "$MOUNT_POINT/boot"
 mv /tmp/town-root.sfs "$MOUNT_POINT/root.sfs"
+rm -rf "$STAGE"
 sync
 
 # --- Resize filesystem and shrink image ---
@@ -406,8 +427,9 @@ print_info "Shrinking data partition to fit contents..."
 umount "$MOUNT_POINT"
 rmdir "$MOUNT_POINT" 2>/dev/null || true
 
-# Check and shrink the ext4 filesystem to minimum size
-# e2fsck returns 1 when it corrects errors (e.g. creating lost+found); that's OK
+# Shrink to minimum — now effective because the content sits contiguously in a
+# freshly created filesystem. e2fsck returns 1 when it corrects minor issues
+# (e.g. creating lost+found); that's OK.
 e2fsck -fy "$PART3" || [ $? -le 1 ]
 resize2fs -M "$PART3"
 

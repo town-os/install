@@ -33,7 +33,9 @@ echo "${IMAGE_HOSTNAME:-town-os}" >/etc/hostname
 # aarch64 kernel), and mkinitcpio treats a listed-but-missing module as a HARD
 # ERROR (non-zero exit), which fails the whole build. So filter the wishlist down
 # to modules actually present for the installed kernel before writing MODULES=.
-WANT_MODULES="loop overlay squashfs zstd nf_tables ahci sd_mod virtio_blk virtio_scsi nvme usb_storage uas e1000 e1000e igb ixgbe i40e ice virtio_net r8169 tg3 bnxt_en mlx4_en mlx5_core cfg80211 mac80211 iwlwifi iwlmvm ath9k ath10k_pci ath11k_pci brcmfmac mt76x2u rtw88_pci rtw89_pci"
+# Note: no zstd module needed — the squashfs root is gzip-compressed (zlib is
+# built into the kernel), and zstd squashfs support is absent on aarch64.
+WANT_MODULES="loop overlay squashfs nf_tables ahci sd_mod virtio_blk virtio_scsi nvme usb_storage uas e1000 e1000e igb ixgbe i40e ice virtio_net r8169 tg3 bnxt_en mlx4_en mlx5_core cfg80211 mac80211 iwlwifi iwlmvm ath9k ath10k_pci ath11k_pci brcmfmac mt76x2u rtw88_pci rtw89_pci"
 KVER="$(ls -1 /usr/lib/modules | head -1)"
 HAVE_MODULES=""
 for m in $WANT_MODULES; do
