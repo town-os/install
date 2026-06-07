@@ -166,6 +166,13 @@ Welcome to Town OS! \r (\m)
 
 ISSUE
 echo "Welcome to Town OS! Please access http://${ADMIN_HOST} in a browser." > /etc/motd
-echo 'GRUB_CMDLINE_LINUX_DEFAULT="rootwait console=tty0 console=ttyS0,115200"' >> /etc/default/grub
+# Serial console device is arch-specific (no ttyS0 on aarch64 — it's the PL011
+# ttyAMA0). install.sh writes grub.cfg directly so this /etc/default/grub line is
+# not used for the shipped config, but keep it correct for any later grub-mkconfig.
+case "$(uname -m)" in
+  aarch64) SERIAL_TTY=ttyAMA0 ;;
+  *)       SERIAL_TTY=ttyS0 ;;
+esac
+echo "GRUB_CMDLINE_LINUX_DEFAULT=\"rootwait console=tty0 console=${SERIAL_TTY},115200\"" >> /etc/default/grub
 echo "GRUB_DISTRIBUTOR=\"Town OS\"" >> /etc/default/grub
 echo GRUB_TERMINAL_OUTPUT=console >> /etc/default/grub

@@ -6,6 +6,11 @@ After=rc-local.service
 Before=getty.target
 IgnoreOnIsolate=yes
 ConditionPathExists=/dev/%I
+# Only run when a serial console was actually selected at boot. The serial device
+# is arch-specific (ttyS0 on x86_64, ttyAMA0/PL011 on aarch64). install.sh
+# rewrites this line from $SERIAL_TTY at build time so it stays IN TANDEM with the
+# GRUB kernel `console=` parameter (both come from the same SERIAL_TTY). The value
+# below is the x86_64 default and is what ships if the build-time rewrite is absent.
 ConditionKernelCommandLine=console=ttyS0,115200
 Conflicts=serial-getty@%i.service
 

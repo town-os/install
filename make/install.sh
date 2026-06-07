@@ -5,7 +5,9 @@ set -xeou pipefail
 export DEBUG=${DEBUG:-}
 export KEEP_MOUNT=${KEEP_MOUNT:-}
 # When non-empty, GRUB defaults to the serial-console boot entry so the machine
-# comes up headless on ttyS0,115200 with no keyboard/monitor required.
+# comes up headless on the serial port (115200) with no keyboard/monitor required.
+# The serial device is arch-specific (ttyS0 on x86_64, ttyAMA0 on aarch64); see
+# SERIAL_TTY below.
 export SERIAL_CONSOLE=${SERIAL_CONSOLE:-}
 
 town_config() {
@@ -57,11 +59,13 @@ case "$ARCH" in
     KERNEL_PKG="linux618"
     KERNEL_ZFS_PKG="linux618-zfs"
     GRUB_EFI_TARGET="x86_64-efi"
+    SERIAL_TTY="ttyS0"         # PC 16550 UART
     ;;
   aarch64)
     KERNEL_PKG="linux-aarch64"
     KERNEL_ZFS_PKG=""          # no prebuilt zfs kernel module package on aarch64
     GRUB_EFI_TARGET="arm64-efi"
+    SERIAL_TTY="ttyAMA0"       # ARM PL011 UART (e.g. qemu 'virt'); there is no ttyS0
     ;;
   *)
     echo "Unsupported build architecture: $ARCH (expected x86_64 or aarch64)" >&2
@@ -219,6 +223,11 @@ if [ -n "$PACKAGE_DNS" ]; then
 else
   sed -i "/@PACKAGE_DNS@/d" $MOUNT_POINT/etc/systemd/system/town-os-systemcontroller.service
 fi
+# Keep the serial-getty's console gate IN TANDEM with the GRUB kernel `console=`
+# parameter: both derive from $SERIAL_TTY (ttyS0 on x86_64, ttyAMA0 on aarch64),
+# so the getty only starts on the exact serial device the kernel was told to use.
+sed -i "s|^ConditionKernelCommandLine=console=.*|ConditionKernelCommandLine=console=${SERIAL_TTY},115200|" \
+  $MOUNT_POINT/etc/systemd/system/town-os-serial-getty@.service
 chroot_cmd mkdir -p /usr/lib/town-os
 cp ./town-os.yaml $MOUNT_POINT/usr/lib/town-os/town-os.yaml
 rsync -a ./scripts/ $MOUNT_POINT/usr/lib/town-os/scripts/
@@ -261,7 +270,7 @@ podman exec town-build busctl call \
   "systemd-resolved.service" \
   "sshd.service" \
   "town-os-getty@tty1.service" \
-  "town-os-serial-getty@ttyS0.service" \
+  "town-os-serial-getty@${SERIAL_TTY}.service" \
   false false
 
 # Mask default getty units so they don't conflict with ttyforce getty
@@ -269,7 +278,7 @@ podman exec town-build busctl call \
   org.freedesktop.systemd1 /org/freedesktop/systemd1 \
   org.freedesktop.systemd1.Manager MaskUnitFiles "asbb" 2 \
   "getty@tty1.service" \
-  "serial-getty@ttyS0.service" \
+  "serial-getty@${SERIAL_TTY}.service" \
   false false
 
 if [ "$STORAGE_BACKEND" = "zfs" ]; then
@@ -301,12 +310,13 @@ esac
 INITRD=$(basename $(ls "$MOUNT_POINT"/boot/initramfs-*.img | grep -v fallback | head -1))
 
 # Default boot entry. The menu order below is: 0 = "Town OS" (console=tty0,
-# needs a keyboard/monitor), 1 = "Town OS (Serial Console)" (console=ttyS0).
-# When SERIAL_CONSOLE is set we default to the serial entry so the machine boots
-# headless on the serial port with no keyboard required.
+# needs a keyboard/monitor), 1 = "Town OS (Serial Console)" (console=$SERIAL_TTY,
+# which is ttyS0 on x86_64 and ttyAMA0 on aarch64). When SERIAL_CONSOLE is set we
+# default to the serial entry so the machine boots headless on the serial port
+# with no keyboard required.
 if [ -n "$SERIAL_CONSOLE" ]; then
   GRUB_DEFAULT_ENTRY=1
-  print_info "Serial console requested: defaulting GRUB to the serial entry (ttyS0,115200)."
+  print_info "Serial console requested: defaulting GRUB to the serial entry (${SERIAL_TTY},115200)."
 else
   GRUB_DEFAULT_ENTRY=0
 fi
@@ -344,12 +354,12 @@ menuentry "Town OS" {
 }
 
 menuentry "Town OS (Serial Console)" {
-    linux /boot/$KERNEL root=UUID=$DATA_UUID rootwait rw console=ttyS0,115200
+    linux /boot/$KERNEL root=UUID=$DATA_UUID rootwait rw console=${SERIAL_TTY},115200
     initrd /boot/$INITRD
 }
 
 menuentry "Sledgehammer - Erase Permanent Storage And Reboot" {
-    linux /boot/$KERNEL root=UUID=$DATA_UUID rootwait rw console=tty0 console=ttyS0,115200 town.sledgehammer
+    linux /boot/$KERNEL root=UUID=$DATA_UUID rootwait rw console=tty0 console=${SERIAL_TTY},115200 town.sledgehammer
     initrd /boot/$INITRD
 }
 EOF
