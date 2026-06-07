@@ -48,12 +48,20 @@ sudo podman build --build-arg "BASE_IMAGE=${BASE_IMAGE}" -t town-os-builder \
 #     $IMAGE to the cwd, so the finished image lands in the repo dir on the host.
 # Build vars are forwarded explicitly across the sudo boundary (never sudo -E),
 # then handed to podman via `-e VAR` so they reach install.sh inside the container.
+#
+# Allocate a pseudo-TTY (-t) when stdout is a terminal so pacman/pacstrap show
+# live per-package download and progress output inside the container — pacman
+# suppresses that output when stdout is not a TTY, which is why an interactive
+# `make image` otherwise sits silent during the long pacstrap download. Skip -t
+# when stdout isn't a terminal (CI, pipes) to avoid carriage-return spam in logs.
+TTY_ARG=()
+[ -t 1 ] && TTY_ARG=(-t)
 sudo \
   CONTROLLER_IMAGE="${CONTROLLER_IMAGE:-}" ROLODEX_IMAGE="${ROLODEX_IMAGE:-}" \
   UI_IMAGE="${UI_IMAGE:-}" LOCAL_DNS="${LOCAL_DNS:-}" \
   TTYFORCE_DEV="${TTYFORCE_DEV:-}" TTYFORCE_LATEST="${TTYFORCE_LATEST:-}" \
   IMAGE_HOSTNAME="${IMAGE_HOSTNAME:-}" SERIAL_CONSOLE="${SERIAL_CONSOLE:-}" \
-  podman run --rm --privileged --cgroupns=host \
+  podman run --rm --privileged --cgroupns=host "${TTY_ARG[@]}" \
   -v /dev:/dev \
   -v "$REPO_ROOT":/build -w /build \
   -e CONTROLLER_IMAGE -e ROLODEX_IMAGE -e UI_IMAGE -e LOCAL_DNS \
