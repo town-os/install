@@ -7,6 +7,21 @@ VM_MEMORY="${VM_MEMORY:?VM_MEMORY is required}"
 VM_BRIDGE="${VM_BRIDGE:?VM_BRIDGE is required}"
 FOREGROUND="${FOREGROUND:-0}"
 
+# Boot source. By default QEMU boots the built image file ($IMAGE). Set USB_DEV
+# to a physical USB block device (e.g. /dev/sda) to boot that instead — used by
+# the `qemu-usb` target to test an actual flashed USB stick in a VM. A device
+# boot is ALWAYS opened read-only (snapshot=on, see below) so the physical USB is
+# never modified; guest writes go to a throwaway overlay and are discarded.
+USB_DEV="${USB_DEV:-}"
+BOOT_SRC="${IMAGE}"
+if [ -n "${USB_DEV}" ]; then
+  if [ ! -b "${USB_DEV}" ]; then
+    echo "error: USB_DEV='${USB_DEV}' is not a block device." >&2
+    exit 1
+  fi
+  BOOT_SRC="${USB_DEV}"
+fi
+
 sudo ip link set "${VM_BRIDGE}" allmulticast on 2>/dev/null || true
 
 # Disable IGMP snooping so the bridge floods mDNS multicast to all ports
@@ -140,8 +155,11 @@ MAC=$(echo "${VM_NAME:-town-os}" | md5sum | sed 's/^\(..\)\(..\)\(..\).*/52:54:0
 # image with snapshot=on: QEMU opens the base READ-ONLY (our read permission is
 # enough) and diverts guest writes to a throwaway overlay, leaving the installed
 # image pristine. The headless root path opens it read/write as before.
-USBDISK_DRIVE="if=none,id=usbdisk,file=${IMAGE},format=raw"
-if [ "${#GFX_ARGS[@]}" -gt 0 ]; then
+USBDISK_DRIVE="if=none,id=usbdisk,file=${BOOT_SRC},format=raw"
+# Open read-only (snapshot=on) when the graphical path runs QEMU as the user (it
+# only has read permission on the root-owned image) OR when booting a physical
+# USB device (never mutate the user's real stick — writes hit a throwaway overlay).
+if [ "${#GFX_ARGS[@]}" -gt 0 ] || [ -n "${USB_DEV}" ]; then
   USBDISK_DRIVE="${USBDISK_DRIVE},snapshot=on"
 fi
 
@@ -174,16 +192,29 @@ QEMU_CMD=(
 # A prior root run may have left a root-owned serial socket; clear it either way.
 rm -f /tmp/town-os-serial.sock 2>/dev/null || sudo rm -f /tmp/town-os-serial.sock 2>/dev/null || true
 
+# qemu-usb on the graphical path runs QEMU as the INVOKING USER (below) — a root
+# GTK client fails to authorize to the user's Wayland/X session ("authorization
+# failed"), the same reason the image path runs as the user. The user therefore
+# needs READ access to the raw device. Grant it just for this run via sudo (an
+# ACL, falling back to chmod o+r) rather than permanent 'disk' group membership
+# or running all of QEMU as root. snapshot=on (above) keeps the open read-only,
+# so read access is all that's required and the physical stick is never written.
+if [ -n "${USB_DEV}" ] && [ "${#GFX_ARGS[@]}" -gt 0 ] && [ ! -r "${USB_DEV}" ]; then
+  echo "Granting $(id -un) read access to ${USB_DEV} for this read-only boot..."
+  sudo setfacl -m "u:$(id -un):r" "${USB_DEV}" 2>/dev/null \
+    || sudo chmod o+r "${USB_DEV}"
+fi
+
 # Privilege model:
-#  - Graphical guest (aarch64): run QEMU as the INVOKING USER. GTK then maps its
-#    window in the user's OWN Wayland/X session, which just works. Running QEMU
-#    as root does NOT display: a root GTK client can connect to the user's
-#    Wayland socket (CAP_DAC_OVERRIDE) and even create surfaces, but GNOME/Mutter
-#    will not map a window owned by a different user — so nothing appears. Root
-#    is unnecessary anyway: the bridge attaches via the setuid qemu-bridge-helper
-#    (see `allow` in /etc/qemu/bridge.conf) and aarch64 uses no KVM. The USB
-#    image is opened read-only via snapshot=on (above) so the user can read it.
-#  - Headless x86 (-nographic, KVM + bridge): keep sudo/root.
+#  - Graphical guest (aarch64), IMAGE or USB device: run QEMU as the INVOKING
+#    USER. GTK then maps its window in the user's OWN Wayland/X session. Running
+#    QEMU as root does NOT display: a root GTK client connects to the user's
+#    Wayland socket but the compositor refuses to authorize a cross-UID window
+#    ("authorization failed"), so nothing appears. Root is unnecessary anyway —
+#    the bridge attaches via the setuid qemu-bridge-helper, the image is opened
+#    read-only via snapshot=on, and for a USB device boot the user was granted
+#    read access just above (so QEMU-as-user can still read the raw device).
+#  - Headless x86 (-nographic, KVM + bridge): keep sudo/root (no display to map).
 if [ "${#GFX_ARGS[@]}" -gt 0 ]; then
   "${QEMU_CMD[@]}"
 else

@@ -17,11 +17,13 @@ VM_BRIDGE   ?= virbr0
 VM_NAME     ?= town-os
 FOREGROUND  ?=
 LOCAL_DNS   ?=
+# Physical USB block device to boot with `make qemu-usb` (e.g. /dev/sda).
+USB_DEV     ?=
 # When non-empty, the built image's GRUB defaults to the serial-console entry
 # (console=ttyS0,115200) so the machine boots headless with no keyboard/monitor.
 SERIAL_CONSOLE ?=
 
-.PHONY: help run run-release stop image image-release qemu qemu-fg \
+.PHONY: help run run-release stop image image-release qemu qemu-fg qemu-usb \
         qemu-release virtualbox virtualbox-fg virtualbox-release \
         stop-qemu stop-virtualbox vm-ip serial clean clean-images \
         cleanup-loopback deps deps-debian release flash rebuild-qemu image-container
@@ -38,6 +40,7 @@ help:
 	@echo 'Run (QEMU):'
 	@echo '  qemu             Build if stale, launch QEMU in the background'
 	@echo '  qemu-fg          Build if stale, launch QEMU in the foreground (serial attached)'
+	@echo '  qemu-usb         Launch QEMU in the foreground from a physical USB (USB_DEV=/dev/sdX); no build'
 	@echo '  run              Build if stale, launch a libvirt-managed VM'
 	@echo '  rebuild-qemu     stop + clean + image + qemu'
 	@echo '  serial           Attach to a running QEMU serial console (Ctrl-] to detach)'
@@ -135,6 +138,16 @@ qemu: $(IMAGE)
 qemu-fg: $(IMAGE)
 	FOREGROUND=1 VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_BRIDGE=$(VM_BRIDGE) \
 	  ${PWD}/make/qemu.sh $(IMAGE)
+
+# Boot QEMU (foreground) from a PHYSICAL USB device instead of the built image.
+# Does NOT build an image — point USB_DEV at the flashed stick, e.g.:
+#   make qemu-usb USB_DEV=/dev/sda
+# The device is opened read-only (snapshot): guest writes are discarded, so the
+# real USB is never modified. The four data disks (disk0-3.img) are still used.
+qemu-usb:
+	@[ -n "$(USB_DEV)" ] || { echo 'error: set USB_DEV=/dev/sdX (the USB block device to boot)'; exit 1; }
+	FOREGROUND=1 USB_DEV=$(USB_DEV) VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_BRIDGE=$(VM_BRIDGE) \
+	  VM_NAME=$(VM_NAME) ${PWD}/make/qemu.sh $(USB_DEV)
 
 stop:
 	IMAGE=$(IMAGE) VM_NAME=$(VM_NAME) ${PWD}/make/stop.sh
