@@ -29,7 +29,7 @@ VM_NAME="${VM_NAME:-town-os}"
 IMAGE="${IMAGE:-image.raw}"
 IMAGE_HOSTNAME="${IMAGE_HOSTNAME:-town-os}"
 # Space-separated "listen[:guestport]" TCP mappings.
-LAN_PROXY_PORTS="${LAN_PROXY_PORTS:-80 443 5309 2222:22}"
+LAN_PROXY_PORTS="${LAN_PROXY_PORTS:-80 443 5309 9090 3000 9100 2222:22}"
 
 if ! command -v avahi-publish >/dev/null 2>&1; then
   echo "error: avahi-publish not found. Install avahi:" >&2
