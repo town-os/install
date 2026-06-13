@@ -9,7 +9,7 @@ case "${ID:-}" in
   arch|manjaro|endeavouros|garuda)
     sudo pacman -S --needed base-devel arch-install-scripts parted e2fsprogs \
       dosfstools rsync psmisc lsof squashfs-tools libvirt dnsmasq qemu-full \
-      socat lbzip2 pv podman dbus
+      socat lbzip2 pv podman dbus avahi
     ;;
   ubuntu|debian|pop|linuxmint)
     sudo apt-get update
@@ -17,7 +17,7 @@ case "${ID:-}" in
       build-essential parted e2fsprogs dosfstools rsync psmisc lsof \
       squashfs-tools libvirt-daemon-system libvirt-clients dnsmasq-base \
       qemu-system-x86 qemu-utils socat lbzip2 pv podman \
-      dbus util-linux
+      dbus util-linux avahi-daemon avahi-utils
     ;;
   fedora*|rhel|centos|rocky|almalinux)
     # Image building still requires Arch-specific tools (pacstrap, mkinitcpio,
@@ -27,7 +27,8 @@ case "${ID:-}" in
     sudo dnf install -y \
       gcc make parted e2fsprogs dosfstools rsync psmisc lsof \
       squashfs-tools libvirt libvirt-client dnsmasq \
-      qemu-system-x86 qemu-img socat lbzip2 pv podman util-linux
+      qemu-system-x86 qemu-img socat lbzip2 pv podman util-linux \
+      avahi avahi-tools
     ;;
   *)
     echo "Unsupported distro: ${ID:-unknown}" >&2
@@ -66,5 +67,34 @@ fi
 # Enable mDNS on the VM bridge so the host can resolve guest .local names
 VM_BRIDGE="${VM_BRIDGE:-virbr0}"
 sudo resolvectl mdns "${VM_BRIDGE}" yes 2>/dev/null || true
+
+# Hosts running firewalld (Fedora & friends — Arch/Debian don't enable it by
+# default): the 'libvirt' zone holding the bridge allows dhcp/dns/ssh/tftp but
+# NOT mdns, and ends in a catch-all reject — guest mDNS (UDP 5353) never
+# reaches resolved. Allow it permanently.
+if command -v firewall-cmd >/dev/null 2>&1 && sudo firewall-cmd --state >/dev/null 2>&1; then
+  sudo firewall-cmd --permanent --zone=libvirt --add-service=mdns >/dev/null 2>&1 || true
+  sudo firewall-cmd --reload >/dev/null 2>&1 || true
+  # firewall-cmd --reload flushes netavark's NAT/DNS rules, silently breaking
+  # networking for running podman containers — restore them.
+  sudo podman network reload --all >/dev/null 2>&1 || true
+fi
+
+# avahi publishes the LAN-side mDNS alias for `make lan-proxy`. It MUST be
+# scoped OFF the VM bridge: the guest owns its name on the bridge, and a host
+# responder probing the same name there would trigger mDNS conflict resolution
+# and force the guest to rename itself (town-os -> town-os-2). resolved keeps
+# handling mDNS on the bridge; avahi handles the LAN side.
+if [ -f /etc/avahi/avahi-daemon.conf ]; then
+  if grep -q '^[#[:space:]]*deny-interfaces=' /etc/avahi/avahi-daemon.conf; then
+    sudo sed -i "s/^[#[:space:]]*deny-interfaces=.*/deny-interfaces=${VM_BRIDGE}/" /etc/avahi/avahi-daemon.conf
+  else
+    sudo sed -i "/^\[server\]/a deny-interfaces=${VM_BRIDGE}" /etc/avahi/avahi-daemon.conf
+  fi
+fi
+sudo busctl call org.freedesktop.systemd1 /org/freedesktop/systemd1 \
+  org.freedesktop.systemd1.Manager EnableUnitFiles "asbb" 1 "avahi-daemon.service" false false
+sudo busctl call org.freedesktop.systemd1 /org/freedesktop/systemd1 \
+  org.freedesktop.systemd1.Manager RestartUnit "ss" "avahi-daemon.service" "replace"
 
 sudo systemctl reload systemd-resolved 2>/dev/null || true

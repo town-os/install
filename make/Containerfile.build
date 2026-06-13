@@ -10,6 +10,30 @@
 ARG BASE_IMAGE=docker.io/library/archlinux:latest
 FROM ${BASE_IMAGE}
 
+# Stop EU-first downloads: the stock mirrorlist in the aarch64 base image
+# (menci/archlinuxarm) lists the GeoDNS round-robin followed by European
+# mirrors first, and pacman walks the list in order — so e.g. US hosts pull
+# every package from Denmark/Germany, slowly and unreliably. Prepend a US
+# mirror as the default (override with the BUILD_MIRROR build ARG — a full
+# Server URL with $repo/$arch placeholders); the stock list stays below it as
+# fallback if the chosen mirror is down. This runs before any pacman download,
+# so the builder's own installs, the package prefetch below, and pacstrap
+# inside the build (which inherits this mirrorlist) all use it.
+# ParallelDownloads smooths over flaky links.
+ARG BUILD_MIRROR=
+RUN set -u; \
+    ml=/etc/pacman.d/mirrorlist; \
+    if [ -z "${BUILD_MIRROR}" ]; then \
+      case "$(uname -m)" in \
+        aarch64) BUILD_MIRROR='http://ca.us.mirror.archlinuxarm.org/$arch/$repo' ;; \
+        *)       BUILD_MIRROR='https://america.mirror.pkgbuild.com/$repo/os/$arch' ;; \
+      esac; \
+    fi; \
+    { printf 'Server = %s\n' "${BUILD_MIRROR}"; cat "$ml"; } > "$ml.new" \
+    && mv "$ml.new" "$ml"; \
+    sed -i 's/^#ParallelDownloads.*/ParallelDownloads = 5/' /etc/pacman.conf; \
+    echo '=== mirrorlist (primary first):'; head -n 2 "$ml"
+
 # Host-side tools install.sh shells out to (outside the chroot). Compilation
 # (rust/gcc) happens INSIDE the pacstrapped chroot via configure.sh, so
 # base-devel is intentionally NOT installed here.

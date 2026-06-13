@@ -245,6 +245,20 @@ fi
 # so the getty only starts on the exact serial device the kernel was told to use.
 sed -i "s|^ConditionKernelCommandLine=console=.*|ConditionKernelCommandLine=console=${SERIAL_TTY},115200|" \
   $MOUNT_POINT/etc/systemd/system/town-os-serial-getty@.service
+
+# On aarch64, force podman to pull the arm64 image variants for the controller
+# and rolodex containers. On an aarch64 host podman normally selects arm64 from a
+# multi-arch manifest, but make it explicit so the build's architecture is always
+# honored: a pull that can't find an arm64 image then fails loudly instead of
+# silently fetching an amd64 image that can't run natively. x86_64 images are left
+# untouched — podman's host-arch default is already correct there.
+if [ "$ARCH" = "aarch64" ]; then
+  for svc in town-os-systemcontroller.service town-os-system--rolodex.service; do
+    sed -i 's|podman run --pull=always|podman run --pull=always --platform=linux/arm64|' \
+      "$MOUNT_POINT/etc/systemd/system/$svc"
+  done
+fi
+
 chroot_cmd mkdir -p /usr/lib/town-os
 cp ./town-os.yaml $MOUNT_POINT/usr/lib/town-os/town-os.yaml
 rsync -a ./scripts/ $MOUNT_POINT/usr/lib/town-os/scripts/

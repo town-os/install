@@ -28,7 +28,7 @@ SERIAL_CONSOLE ?=
 
 .PHONY: help run run-release stop image image-release qemu qemu-fg qemu-usb \
         qemu-release virtualbox virtualbox-fg virtualbox-release \
-        stop-qemu stop-virtualbox vm-ip serial clean clean-images \
+        stop-qemu stop-virtualbox vm-ip serial lan-proxy clean clean-images \
         cleanup-loopback deps deps-debian release flash rebuild-qemu image-container
 
 help:
@@ -48,6 +48,7 @@ help:
 	@echo '  rebuild-qemu     stop + clean + image + qemu'
 	@echo '  serial           Attach to a running QEMU serial console (Ctrl-] to detach)'
 	@echo '  vm-ip            Print the IP address of the running VM'
+	@echo '  lan-proxy        Expose the running VM to the LAN as <hostname>.local (mDNS alias + port relays)'
 	@echo
 	@echo 'Run (VirtualBox):'
 	@echo '  virtualbox       Build if stale, launch a VirtualBox VM in the background'
@@ -174,6 +175,13 @@ vm-ip:
 
 serial:
 	${PWD}/make/serial.sh
+
+# Expose the running NAT'd VM to the LAN: avahi alias <IMAGE_HOSTNAME>.local ->
+# host IP + socat TCP relays to the guest. Foreground; Ctrl-C stops and cleans
+# up. Must NOT depend on $(IMAGE) — it must never trigger a build.
+lan-proxy:
+	VM_NAME=$(VM_NAME) IMAGE=$(IMAGE) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) \
+	  ${PWD}/make/lan-proxy.sh
 
 clean: stop
 	IMAGE=$(IMAGE) VM_NAME=$(VM_NAME) ${PWD}/make/clean.sh

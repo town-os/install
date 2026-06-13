@@ -31,7 +31,17 @@ fi
 echo "Using builder base image: ${BASE_IMAGE}"
 
 # Build the builder image natively (podman layer cache makes repeat runs cheap).
-sudo podman build --build-arg "BASE_IMAGE=${BASE_IMAGE}" -t town-os-builder \
+#
+# --network=host for BOTH the build and the run below: the build needs working
+# DNS, and podman's bridged (netavark) DNS uses plain UDP/53 from glibc, which
+# some networks (e.g. guest WiFi) block while still allowing DNS over TCP. The
+# host's systemd-resolved degrades to TCP automatically and keeps resolving;
+# sharing the host network lets the container use that full resolver path. It
+# also makes builds immune to netavark rule flushes (a known side effect of
+# `firewall-cmd --reload`). Isolation buys nothing here — the run is already
+# --privileged, and the nested town-build container uses --network=none.
+sudo podman build --network=host --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
+  --build-arg "BUILD_MIRROR=${BUILD_MIRROR:-}" -t town-os-builder \
   -f "$SCRIPT_DIR/Containerfile.build" "$SCRIPT_DIR"
 
 # Run the unmodified install.sh inside the container.
@@ -61,7 +71,7 @@ sudo \
   UI_IMAGE="${UI_IMAGE:-}" LOCAL_DNS="${LOCAL_DNS:-}" \
   TTYFORCE_DEV="${TTYFORCE_DEV:-}" TTYFORCE_LATEST="${TTYFORCE_LATEST:-}" \
   IMAGE_HOSTNAME="${IMAGE_HOSTNAME:-}" SERIAL_CONSOLE="${SERIAL_CONSOLE:-}" \
-  podman run --rm --privileged --cgroupns=host "${TTY_ARG[@]}" \
+  podman run --rm --privileged --cgroupns=host --network=host "${TTY_ARG[@]}" \
   -v /dev:/dev \
   -v "$REPO_ROOT":/build -w /build \
   -e CONTROLLER_IMAGE -e ROLODEX_IMAGE -e UI_IMAGE -e LOCAL_DNS \

@@ -22,6 +22,44 @@ if [ -n "${USB_DEV}" ]; then
   BOOT_SRC="${USB_DEV}"
 fi
 
+# The VM attaches to the libvirt 'default' NAT bridge via qemu-bridge-helper.
+# On Fedora libvirt runs as modular SOCKET-ACTIVATED daemons (virtnetworkd):
+# nothing starts them at boot, so the autostart 'default' network — and virbr0
+# with it — does not exist until libvirt is first poked. Without the bridge,
+# qemu-bridge-helper fails and the ip/sysctl tweaks below silently no-op.
+if ! ip link show "${VM_BRIDGE}" >/dev/null 2>&1; then
+  # Any virsh call activates the daemons, which brings up autostart networks;
+  # net-start covers a defined-but-stopped network. If net-start says the
+  # network is already active while its bridge is missing, the state is stale
+  # (e.g. the bridge was deleted out from under libvirt) — cycle the network.
+  sudo virsh net-start default >/dev/null 2>&1 \
+    || { sudo virsh net-destroy default >/dev/null 2>&1 \
+           && sudo virsh net-start default >/dev/null 2>&1; } \
+    || true
+  for _ in $(seq 1 10); do
+    ip link show "${VM_BRIDGE}" >/dev/null 2>&1 && break
+    sleep 0.5
+  done
+  if ! ip link show "${VM_BRIDGE}" >/dev/null 2>&1; then
+    echo "error: bridge ${VM_BRIDGE} does not exist and could not be started." >&2
+    echo "       Run 'make deps' to define/autostart libvirt's default network," >&2
+    echo "       or create the bridge manually if VM_BRIDGE is custom." >&2
+    exit 1
+  fi
+fi
+
+# Re-assert mDNS on the bridge: resolvectl's per-link setting is runtime-only
+# and is lost whenever the bridge is recreated (e.g. every reboot), breaking
+# guest .local resolution (vm-ip.sh). Idempotent, so do it every launch.
+sudo resolvectl mdns "${VM_BRIDGE}" yes 2>/dev/null || true
+
+# firewalld hosts (Fedora): guest mDNS (UDP 5353) must be allowed in the zone
+# holding the bridge or it's rejected before resolved sees it. deps.sh adds it
+# permanently; re-assert at runtime in case deps hasn't been re-run.
+if command -v firewall-cmd >/dev/null 2>&1; then
+  sudo firewall-cmd --zone=libvirt --add-service=mdns >/dev/null 2>&1 || true
+fi
+
 sudo ip link set "${VM_BRIDGE}" allmulticast on 2>/dev/null || true
 
 # Disable IGMP snooping so the bridge floods mDNS multicast to all ports

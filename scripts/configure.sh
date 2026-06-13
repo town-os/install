@@ -108,6 +108,12 @@ mkdir -p /var/log/journal
 # cycles through DNS= servers on timeout and caches which are dead, so a
 # rolodex outage degrades to the upstreams automatically. mDNS is enabled
 # for .local hostname advertisement (replaces avahi-daemon).
+#
+# Note: the DNS= entries after 127.0.0.2 are only consulted if rolodex itself
+# is unreachable — in normal operation rolodex answers every query and chooses
+# its OWN upstream (DHCP-provided DNS, else 1.1.1.1/8.8.8.8) per
+# scripts/rolodex-config.sh. That is where DHCP DNS is honored; resolved always
+# hits rolodex first.
 mkdir -p /etc/systemd/resolved.conf.d
 cat >/etc/systemd/resolved.conf.d/townos.conf <<RESOLVED
 [Resolve]

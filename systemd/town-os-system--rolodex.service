@@ -10,9 +10,9 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=exec
-ExecStartPre=/bin/mkdir -p /town-os/rolodex
-ExecStartPre=/bin/sh -c '\
-  printf "database_path: /data/rolodex.db\ndns:\n  bind:\n    - udp: \"primary:53\"\n    - udp: \"127.0.0.2:53\"\n    - tcp: \"primary:53\"\n    - tcp: \"127.0.0.2:53\"\ngrpc:\n  tcp_bind: \"\"\n  unix_socket: /data/rolodex.sock\n  shared_secret: \"\"\nforwarders:\n  - \"1.1.1.1:53\"\n  - \"8.8.8.8:53\"\nrbl:\n  enabled: true\n  providers: []\n" > /town-os/rolodex/rolodex.yml'
+# Generate rolodex.yml with DHCP-aware forwarders (DHCP DNS when the lease
+# offers any, else Cloudflare/Google). See the script for the full rationale.
+ExecStartPre=/bin/sh /usr/lib/town-os/scripts/rolodex-config.sh
 ExecStartPre=-/usr/bin/podman container cleanup town-os-system--rolodex
 ExecStartPre=-/usr/bin/podman stop -t 10 town-os-system--rolodex
 ExecStartPre=-/usr/bin/podman rm -f town-os-system--rolodex
