@@ -214,7 +214,12 @@ cp ./initcpio/hooks/town-squashfs $MOUNT_POINT/usr/lib/initcpio/hooks/town-squas
 cp ./initcpio/install/town-installer $MOUNT_POINT/usr/lib/initcpio/install/town-installer
 cp ./initcpio/hooks/town-installer $MOUNT_POINT/usr/lib/initcpio/hooks/town-installer
 
-CONTROLLER_IMAGE="${CONTROLLER_IMAGE:-quay.io/town/town:rc.latest}"
+# Tags are arch-suffixed (rc.latest-x86_64 / rc.latest-aarch64) — per-arch
+# tags, not multi-arch manifests. The Makefile normally supplies these; the
+# defaults cover a direct install.sh invocation. Rolodex follows the
+# controller's tag.
+CONTROLLER_IMAGE="${CONTROLLER_IMAGE:-quay.io/town/town:rc.latest-${ARCH}}"
+ROLODEX_IMAGE="${ROLODEX_IMAGE:-quay.io/town/rolodex:${CONTROLLER_IMAGE##*:}}"
 
 # Resolve LOCAL_DNS into a concrete package DNS name
 PACKAGE_DNS=""

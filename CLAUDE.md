@@ -91,7 +91,7 @@ make qemu-fg
 | `IMAGE_HOSTNAME` | `town-os` | System hostname and mDNS name |
 | `LOCAL_DNS` | *(empty)* | Dev DNS override (`1` = auto, or literal hostname) |
 | `CONTROLLER_BASE` | `quay.io/town/town` | Controller image repository (no tag) |
-| `CONTROLLER_TAG` | `rc.latest` | Controller image tag; composed onto `CONTROLLER_BASE` |
+| `CONTROLLER_TAG` | `rc.latest-$(uname -m)` | Controller image tag; composed onto `CONTROLLER_BASE`. Tags are **arch-suffixed** (`rc.latest-x86_64` / `rc.latest-aarch64`) — repositories publish per-arch tags, not multi-arch manifests. Rolodex and UI tags follow the same scheme. |
 | `CONTROLLER_IMAGE` | `$(CONTROLLER_BASE):$(CONTROLLER_TAG)` | Full controller image reference; set directly to override base+tag |
 | `TTYFORCE_DEV` | *(empty)* | Set non-empty to install ttyforce from git instead of crates.io |
 | `TTYFORCE_LATEST` | *(empty)* | Set non-empty to install the latest ttyforce from crates.io (ignores version pin) |

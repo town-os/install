@@ -4,11 +4,14 @@ BUILD_DATE       := $(shell date +%Y-%m-%d)
 BUILD_ARCH       := $(shell uname -m)
 IMAGE            ?= town-os-$(BUILD_DATE)-$(BUILD_ARCH).img
 IMAGE_SIZE       ?= 12G
+# Image tags are arch-suffixed (rc.latest-x86_64 / rc.latest-aarch64): each
+# repository publishes per-arch tags rather than a multi-arch manifest. Builds
+# are always native, so BUILD_ARCH is the right suffix for everything pulled.
 CONTROLLER_BASE  ?= quay.io/town/town
-CONTROLLER_TAG   ?= rc.latest
+CONTROLLER_TAG   ?= rc.latest-$(BUILD_ARCH)
 CONTROLLER_IMAGE ?= $(CONTROLLER_BASE):$(CONTROLLER_TAG)
 ROLODEX_IMAGE    ?= quay.io/town/rolodex:$(lastword $(subst :, ,$(CONTROLLER_IMAGE)))
-UI_IMAGE         ?= quay.io/town/ui:rc.latest
+UI_IMAGE         ?= quay.io/town/ui:rc.latest-$(BUILD_ARCH)
 VM_DISK_SIZE ?= $(shell grep '^vm_disk_size:' town-os.yaml \
                   | awk '{ print $$2 }' | tr -d '"' | tr -d "'" \
                   || echo 50G)
