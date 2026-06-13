@@ -29,7 +29,7 @@ VM_NAME="${VM_NAME:-town-os}"
 IMAGE="${IMAGE:-image.raw}"
 IMAGE_HOSTNAME="${IMAGE_HOSTNAME:-town-os}"
 # Space-separated "listen[:guestport]" TCP mappings.
-LAN_PROXY_PORTS="${LAN_PROXY_PORTS:-80 443 2222:22}"
+LAN_PROXY_PORTS="${LAN_PROXY_PORTS:-80 443 5309 2222:22}"
 
 if ! command -v avahi-publish >/dev/null 2>&1; then
   echo "error: avahi-publish not found. Install avahi:" >&2
@@ -56,8 +56,13 @@ DEADLINE=$((SECONDS + 120))
 DELAY=1
 GUEST_IP=""
 while [ "${SECONDS}" -lt "${DEADLINE}" ]; do
+  # Pick the lease with the LATEST expiry — virsh's output isn't ordered by
+  # recency, and IP churn can leave several stale leases for this MAC, so a naive
+  # `tail -1` grabs an arbitrary (often stale) one. Columns 1+2 are the ISO
+  # expiry timestamp, which sorts chronologically as a string.
   GUEST_IP=$(sudo virsh net-dhcp-leases default 2>/dev/null \
-    | awk -v mac="${MAC}" '$3 == mac { split($5,a,"/"); print a[1] }' | tail -1) || true
+    | awk -v mac="${MAC}" '$3==mac { k=$1" "$2; if (k>=mk){mk=k; best=$5} }
+                           END { if (best!="") { sub(/\/.*/,"",best); print best } }') || true
   [ -n "${GUEST_IP}" ] && break
   sleep "${DELAY}"
   DELAY=$(( DELAY * 2 > 5 ? 5 : DELAY * 2 ))
@@ -93,6 +98,15 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
+
+# Flush the host's mDNS cache before (re)publishing. The guest advertises the
+# same ${IMAGE_HOSTNAME}.local on the bridge, and its IP churns across reboots,
+# so resolved can be holding a stale record (e.g. a previous boot's address)
+# that would otherwise shadow the alias we're about to publish until its TTL
+# expires. Best-effort; harmless where resolved isn't the resolver.
+if command -v resolvectl >/dev/null 2>&1; then
+  sudo resolvectl flush-caches 2>/dev/null || true
+fi
 
 avahi-publish -a -R "${IMAGE_HOSTNAME}.local" "${HOST_IP}" >/dev/null 2>&1 &
 PUBLISH_PID=$!
