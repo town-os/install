@@ -187,6 +187,47 @@ fi
 # seeded from the VM name so the same VM always gets the same MAC/IP
 MAC=$(echo "${VM_NAME:-town-os}" | md5sum | sed 's/^\(..\)\(..\)\(..\).*/52:54:00:\1:\2:\3/')
 
+# Pin a stable DHCP lease for this VM via a MAC-keyed reservation on libvirt's
+# default network. WHY: the guest presents a fresh DHCP client-id (a dhcpcd
+# DUID) on every boot — its root is read-only squashfs, so the DUID isn't
+# persisted — and dnsmasq keys leases on the client-id ahead of the MAC. Without
+# a reservation the VM therefore gets a NEW address every boot (.9 -> .10 -> ..),
+# which silently breaks `make vm-ip`, `make lan-proxy` (it bakes the guest IP in
+# at startup), and the guest's mDNS record. A MAC reservation forces a fixed IP
+# regardless of the churning client-id. Only meaningful for the libvirt 'default'
+# NAT network; skip custom bridges (we don't run dnsmasq for those). Best-effort
+# — never block the VM launch on it. (Takes effect on the guest's next DHCP, i.e.
+# next boot; the proper guest-side fix is a stable, MAC-based client identifier.)
+if [ "$(sudo virsh net-info default 2>/dev/null | awk '/^Bridge:/{print $2}')" = "${VM_BRIDGE}" ]; then
+  NET_PREFIX=$(sudo virsh net-dumpxml default 2>/dev/null \
+    | grep -oE "ip address='[0-9.]+'" | head -1 | grep -oE "[0-9]+\.[0-9]+\.[0-9]+")
+  if [ -n "${NET_PREFIX}" ]; then
+    if [ -n "${VM_IP:-}" ]; then
+      # Explicit pin. Must be in the default network's subnet or libvirt rejects
+      # the reservation — warn and fall back to the derived IP if it isn't.
+      if [ "${VM_IP%.*}" = "${NET_PREFIX}" ]; then
+        RESERVED_IP="${VM_IP}"
+      else
+        echo "warning: VM_IP=${VM_IP} is not in the ${NET_PREFIX}.0/24 subnet; ignoring it" >&2
+        VM_IP=""
+      fi
+    fi
+    if [ -z "${VM_IP:-}" ]; then
+      # Deterministic per-VM host octet from the same name seed, in .200-.249 (high
+      # end of the pool, away from dnsmasq's low-end dynamic picks).
+      OCTET=$(( 16#$(echo "${VM_NAME:-town-os}" | md5sum | cut -c7-8) % 50 + 200 ))
+      RESERVED_IP="${NET_PREFIX}.${OCTET}"
+    fi
+    # Idempotent: drop any prior entry for this MAC, then (re)add the reservation.
+    sudo virsh net-update default delete ip-dhcp-host \
+      "<host mac='${MAC}'/>" --live --config >/dev/null 2>&1 || true
+    if sudo virsh net-update default add ip-dhcp-host \
+         "<host mac='${MAC}' ip='${RESERVED_IP}'/>" --live --config >/dev/null 2>&1; then
+      echo "Reserved ${RESERVED_IP} for '${VM_NAME:-town-os}' (MAC ${MAC}) on the default network"
+    fi
+  fi
+fi
+
 # The boot image (town-os-*.img) comes from the root image build and is
 # root-owned, mode 0644 (world-READABLE, not writable by the user). The
 # graphical path runs QEMU as the invoking user (see below), so open the USB

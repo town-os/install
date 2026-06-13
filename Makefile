@@ -18,6 +18,12 @@ VM_DISK_SIZE ?= $(shell grep '^vm_disk_size:' town-os.yaml \
 VM_MEMORY   ?= 4G
 VM_BRIDGE   ?= virbr0
 VM_NAME     ?= town-os
+# Pin the VM to a specific IP via a libvirt DHCP reservation. Defaults to .50 on
+# the default network. Override with any address in that subnet, e.g.
+# VM_IP=192.168.122.77. Running multiple VMs at once? Give each its own VM_IP —
+# two VMs sharing one VM_IP collide and the second falls back to a dynamic lease.
+# (If unset/out-of-subnet, qemu.sh derives a stable IP from VM_NAME instead.)
+VM_IP       ?= 192.168.122.50
 FOREGROUND  ?=
 LOCAL_DNS   ?=
 # Physical USB block device to boot with `make qemu-usb` (e.g. /dev/sda).
@@ -136,11 +142,12 @@ virtualbox-release: virtualbox
 
 qemu: $(IMAGE)
 	VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_BRIDGE=$(VM_BRIDGE) \
-	  VM_NAME=$(VM_NAME) IMAGE=$(IMAGE) \
+	  VM_NAME=$(VM_NAME) VM_IP=$(VM_IP) IMAGE=$(IMAGE) \
 	  ${PWD}/make/qemu.sh $(IMAGE)
 
 qemu-fg: $(IMAGE)
 	FOREGROUND=1 VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_BRIDGE=$(VM_BRIDGE) \
+	  VM_NAME=$(VM_NAME) VM_IP=$(VM_IP) \
 	  ${PWD}/make/qemu.sh $(IMAGE)
 
 # Boot QEMU (foreground) from a PHYSICAL USB device instead of the built image.
@@ -151,7 +158,7 @@ qemu-fg: $(IMAGE)
 qemu-usb:
 	@[ -n "$(USB_DEV)" ] || { echo 'error: set USB_DEV=/dev/sdX (the USB block device to boot)'; exit 1; }
 	FOREGROUND=1 USB_DEV=$(USB_DEV) VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_BRIDGE=$(VM_BRIDGE) \
-	  VM_NAME=$(VM_NAME) ${PWD}/make/qemu.sh $(USB_DEV)
+	  VM_NAME=$(VM_NAME) VM_IP=$(VM_IP) ${PWD}/make/qemu.sh $(USB_DEV)
 
 stop:
 	IMAGE=$(IMAGE) VM_NAME=$(VM_NAME) ${PWD}/make/stop.sh
