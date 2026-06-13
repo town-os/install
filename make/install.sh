@@ -246,18 +246,11 @@ fi
 sed -i "s|^ConditionKernelCommandLine=console=.*|ConditionKernelCommandLine=console=${SERIAL_TTY},115200|" \
   $MOUNT_POINT/etc/systemd/system/town-os-serial-getty@.service
 
-# On aarch64, force podman to pull the arm64 image variants for the controller
-# and rolodex containers. On an aarch64 host podman normally selects arm64 from a
-# multi-arch manifest, but make it explicit so the build's architecture is always
-# honored: a pull that can't find an arm64 image then fails loudly instead of
-# silently fetching an amd64 image that can't run natively. x86_64 images are left
-# untouched — podman's host-arch default is already correct there.
-if [ "$ARCH" = "aarch64" ]; then
-  for svc in town-os-systemcontroller.service town-os-system--rolodex.service; do
-    sed -i 's|podman run --pull=always|podman run --pull=always --platform=linux/arm64|' \
-      "$MOUNT_POINT/etc/systemd/system/$svc"
-  done
-fi
+# Architecture selection is handled entirely by the arch-suffixed image tags
+# (rc.latest-${ARCH}, set above): each tag is a single-arch image, and podman
+# pulls for the host's own architecture by default. No --platform flag is used
+# — that is only for pulling a foreign architecture from a multi-arch manifest,
+# which this build never does (it is always native, host arch == image arch).
 
 chroot_cmd mkdir -p /usr/lib/town-os
 cp ./town-os.yaml $MOUNT_POINT/usr/lib/town-os/town-os.yaml
