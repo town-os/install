@@ -12,6 +12,14 @@ _parent_disk() {
 mount_town_os() {
     local boot_disk=$(_parent_disk "$root")
 
+    # Register all btrfs members first. With btrfs_raid_mode: native the
+    # /town-os filesystem spans every data disk as a single multi-device btrfs,
+    # and a multi-device btrfs cannot be mounted from one member until the
+    # kernel knows about all of them. The initrd has no btrfs udev rules, so
+    # nothing scans automatically — without this, the mount below fails with
+    # ENOENT and we wrongly re-launch the installer on every boot.
+    btrfs device scan >/dev/null 2>&1
+
     # Scan for a btrfs partition with Town OS overlay dirs (skip boot device)
     for dev in /dev/sd*1 /dev/nvme*p1 /dev/vd*1; do
         [ -b "$dev" ] || continue

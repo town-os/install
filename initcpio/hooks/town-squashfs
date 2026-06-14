@@ -77,6 +77,14 @@ town_squashfs_mount() {
     if mountpoint -q /town-os; then
         town_os_found=1
     else
+        # Register all btrfs members before mounting. With btrfs_raid_mode:
+        # native the /town-os filesystem spans every data disk as one
+        # multi-device btrfs, which cannot be mounted from a single member
+        # until the kernel knows about all of them (no btrfs udev rules in the
+        # initrd to do it automatically). Without this the mount below fails
+        # with ENOENT and the persistent overlays never come up.
+        btrfs device scan >/dev/null 2>&1
+
         # Scan for the btrfs partition ttyforce created (skip boot device)
         for dev in /dev/sd*1 /dev/nvme*p1 /dev/vd*1; do
             [ -b "$dev" ] || continue
