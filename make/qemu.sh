@@ -22,6 +22,81 @@ if [ -n "${USB_DEV}" ]; then
   BOOT_SRC="${USB_DEV}"
 fi
 
+# Point libvirt's NAT resolver at the HOST's real upstream DNS so the guest
+# inherits the same servers the host got from the local network's DHCP.
+#
+# By default the 'default' network's dnsmasq (the guest's DHCP/DNS server at
+# 192.168.122.1) resolves via the HOST's /etc/resolv.conf -> systemd-resolved.
+# When the host itself points resolved at this guest (i.e. uses Town OS as its
+# resolver), that path LOOPS: guest rolodex -> 192.168.122.1 -> host resolved
+# -> guest -> ... and DNS collapses under load. Pinning the network's <dns>
+# <forwarder> to the host's actual DHCP-provided servers breaks the loop and
+# hands the guest the host's upstream directly: rolodex keeps forwarding to
+# 192.168.122.1, but 192.168.122.1 now answers from the real upstream instead of
+# bouncing back through the host. dnsmasq runs ON the host, so it reaches those
+# servers exactly as the host does -- the NAT'd guest frequently cannot query
+# them directly. Best-effort, only for the libvirt 'default' NAT network we
+# manage; the new forwarders take effect on the network's next (re)start, which
+# the bridge-ensure block below performs. Like the DHCP reservation, this cycles
+# the shared 'default' network when it changes, so co-running VMs on it blip.
+if command -v virsh >/dev/null 2>&1 \
+   && [ "$(sudo virsh net-info default 2>/dev/null | awk '/^Bridge:/{print $2}')" = "${VM_BRIDGE}" ]; then
+  DNS_DEV=$(ip -4 route get 1.1.1.1 2>/dev/null \
+    | awk '{ for (i = 1; i < NF; i++) if ($i == "dev") print $(i + 1) }' | head -1)
+  DNS_NET_PREFIX=$(sudo virsh net-dumpxml default 2>/dev/null \
+    | grep -oE "ip address='[0-9.]+'" | head -1 | grep -oE "[0-9]+\.[0-9]+\.[0-9]+")
+  # Host upstream DNS: prefer NetworkManager's per-link record (it preserves the
+  # DHCP values even when systemd-resolved is manually overridden to point at the
+  # guest); fall back to networkd lease files. Drop loopback (the resolved stub),
+  # the guest subnet, and this VM's IP -- forwarding to any of those rebuilds the
+  # loop. grep -oE extracts the address regardless of nmcli's ' | ' separators.
+  HOST_DNS=$(
+    { nmcli -g IP4.DNS dev show "${DNS_DEV}" 2>/dev/null | tr '|,' '\n\n'
+      awk -F= '/^DNS=/{print $2}' /run/systemd/netif/leases/* 2>/dev/null | tr ' ' '\n'; } \
+      | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' \
+      | grep -vE '^127\.' \
+      | { if [ -n "${DNS_NET_PREFIX}" ]; then grep -vE "^${DNS_NET_PREFIX//./\\.}\."; else cat; fi; } \
+      | { if [ -n "${VM_IP:-}" ]; then grep -vxF "${VM_IP}"; else cat; fi; } \
+      | awk 'NF && !seen[$0]++'
+  ) || true   # tolerate pipefail: literal glob when no networkd leases, or greps that filter everything out
+  if [ -n "${HOST_DNS}" ]; then
+    DNS_WANT=$(printf '%s\n' ${HOST_DNS} | sort | tr '\n' ' ')
+    DNS_HAVE=$(sudo virsh net-dumpxml --inactive default 2>/dev/null \
+      | grep -oE "<forwarder addr='[0-9.]+'/>" \
+      | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | sort | tr '\n' ' ')
+    if [ "${DNS_WANT}" != "${DNS_HAVE}" ]; then
+      DNS_BLOCK=$(printf '  <dns>\n'
+        printf '%s\n' ${HOST_DNS} \
+          | while IFS= read -r s; do printf "    <forwarder addr='%s'/>\n" "${s}"; done
+        printf '  </dns>')
+      DNS_NEW_XML=$(sudo virsh net-dumpxml --inactive default 2>/dev/null \
+        | awk -v ins="${DNS_BLOCK}" '
+            /<dns[ >\/]/ { if ($0 ~ /<\/dns>/ || $0 ~ /\/>/) next; indns=1; next }
+            indns        { if ($0 ~ /<\/dns>/) indns=0; next }
+            /<ip / && !done { print ins; done=1 }
+            { print }')
+      DNS_TMPXML=$(mktemp)
+      printf '%s\n' "${DNS_NEW_XML}" > "${DNS_TMPXML}"
+      # Only updates the PERSISTENT definition -- this never disturbs a running
+      # network, so it is safe to do mid-launch. The new forwarders take effect
+      # the next time the network is cold-started: by the bridge-ensure block
+      # below when the bridge is absent (the common case on Fedora, where the
+      # socket-activated network does not survive a host reboot), or on the next
+      # `virsh net-start`. We deliberately do NOT net-destroy a live network here
+      # -- tearing down virbr0 mid-launch is fragile and would cut co-running VMs.
+      if sudo virsh net-define "${DNS_TMPXML}" >/dev/null 2>&1; then
+        if ip link show "${VM_BRIDGE}" >/dev/null 2>&1; then
+          echo "Updated libvirt 'default' DNS forwarders -> $(echo ${HOST_DNS}) (host upstream);"
+          echo "  applies on the network's next restart: sudo virsh net-destroy default && sudo virsh net-start default"
+        else
+          echo "Set libvirt 'default' DNS forwarders -> $(echo ${HOST_DNS}) (host upstream)"
+        fi
+      fi
+      rm -f "${DNS_TMPXML}"
+    fi
+  fi
+fi
+
 # The VM attaches to the libvirt 'default' NAT bridge via qemu-bridge-helper.
 # On Fedora libvirt runs as modular SOCKET-ACTIVATED daemons (virtnetworkd):
 # nothing starts them at boot, so the autostart 'default' network — and virbr0
