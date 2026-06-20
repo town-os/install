@@ -282,9 +282,10 @@ podman exec town-build busctl call \
 
 podman exec town-build busctl call \
   org.freedesktop.systemd1 /org/freedesktop/systemd1 \
-  org.freedesktop.systemd1.Manager EnableUnitFiles "asbb" 12 \
+  org.freedesktop.systemd1.Manager EnableUnitFiles "asbb" 13 \
   "town-os-overlays.service" \
   "town-os-system--rolodex.service" \
+  "town-os-rolodex-config.path" \
   "town-os-podman-api.service" \
   "town-os-systemcontroller.service" \
   "town-os-sledgehammer.service" \

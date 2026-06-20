@@ -1,0 +1,9 @@
+# vim: ft=systemd
+[Unit]
+Description=Refresh rolodex DNS forwarders from the current DHCP lease
+After=town-os-system--rolodex.service
+RequiresMountsFor=/town-os
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /usr/lib/town-os/scripts/rolodex-reload.sh

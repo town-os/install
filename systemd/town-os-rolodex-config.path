@@ -1,0 +1,19 @@
+# vim: ft=systemd
+[Unit]
+Description=Watch DHCP leases and refresh rolodex DNS forwarders
+# rolodex must exist as a unit for the triggered service to restart it.
+After=town-os-system--rolodex.service
+
+[Path]
+# networkd (re)writes a lease file in this directory on every DHCP transition
+# (acquire/renew/expire). The directory inotify watch fires on the lease
+# file's close-write/rename, triggering town-os-rolodex-config.service. If the
+# directory doesn't exist yet at boot, systemd watches the nearest existing
+# parent and re-arms once networkd creates it; the initial forwarders are
+# written by rolodex's own ExecStartPre, so missing the very first write is
+# harmless — this keeps them current afterward.
+PathChanged=/run/systemd/netif/leases
+Unit=town-os-rolodex-config.service
+
+[Install]
+WantedBy=multi-user.target
