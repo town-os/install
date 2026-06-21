@@ -37,7 +37,7 @@ USB_DEV     ?=
 # (console=ttyS0,115200) so the machine boots headless with no keyboard/monitor.
 SERIAL_CONSOLE ?=
 
-.PHONY: help run run-release stop image image-x86_64 image-release build-installer push-installer qemu qemu-fg qemu-usb \
+.PHONY: help run run-release stop image image-release build-installer push-installer qemu qemu-fg qemu-usb \
         qemu-release virtualbox virtualbox-fg virtualbox-release \
         stop-qemu stop-virtualbox vm-ip serial lan-proxy clean clean-images \
         cleanup-loopback deps deps-debian release flash rebuild-qemu image-container
@@ -47,7 +47,6 @@ help:
 	@echo
 	@echo 'Build:'
 	@echo '  image            Build the disk image (native on Arch, else same-arch Arch container)'
-	@echo '  image-x86_64     Cross-build an x86_64 image on a non-x86_64 host (EMULATED, slow)'
 	@echo '  image-container  Force the same-arch Arch container build path (any host)'
 	@echo '  image-release    Build the image and compress it to .bz2'
 	@echo '  build-installer  Build the installer OCI image from town-os.img.bz2 (no push)'
@@ -129,22 +128,15 @@ FORCE:
 	  'IMAGE_SIZE=$(IMAGE_SIZE)' > $@
 
 $(IMAGE): $(IMAGE_SOURCES) .build-config
-	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) TTYFORCE_DEV=$(TTYFORCE_DEV) TTYFORCE_LATEST=$(TTYFORCE_LATEST) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) SERIAL_CONSOLE=$(SERIAL_CONSOLE) TARGET_ARCH=$(BUILD_ARCH) ${PWD}/make/image.sh $(IMAGE_SIZE) $(IMAGE)
+	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) TTYFORCE_DEV=$(TTYFORCE_DEV) TTYFORCE_LATEST=$(TTYFORCE_LATEST) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) SERIAL_CONSOLE=$(SERIAL_CONSOLE) ${PWD}/make/image.sh $(IMAGE_SIZE) $(IMAGE)
 
 image: $(IMAGE)
 
-# Cross-build an x86_64 image on a non-x86_64 host under EMULATION (binfmt +
-# qemu-user-static — slow). Recursive make so BUILD_ARCH=x86_64 renames the image
-# file and threads through the arch-suffixed tags. On an x86_64 host this is just
-# the normal native build.
-image-x86_64:
-	$(MAKE) image BUILD_ARCH=x86_64
-
 # Force the Arch-container build path regardless of host (install.sh runs inside
-# an Arch container). On non-Arch hosts `make image` already dispatches here
-# automatically; this target also lets you force it on an Arch host.
+# an x86_64 Arch container). On non-Arch hosts `make image` already dispatches
+# here automatically; this target also lets you force it on an Arch host.
 image-container: $(IMAGE_SOURCES) .build-config
-	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) TTYFORCE_DEV=$(TTYFORCE_DEV) TTYFORCE_LATEST=$(TTYFORCE_LATEST) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) SERIAL_CONSOLE=$(SERIAL_CONSOLE) TARGET_ARCH=$(BUILD_ARCH) ${PWD}/make/image-container.sh $(IMAGE_SIZE) $(IMAGE)
+	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) TTYFORCE_DEV=$(TTYFORCE_DEV) TTYFORCE_LATEST=$(TTYFORCE_LATEST) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) SERIAL_CONSOLE=$(SERIAL_CONSOLE) ${PWD}/make/image-container.sh $(IMAGE_SIZE) $(IMAGE)
 
 compress-release:
 	sudo pv $(IMAGE) | lbzip2 > $(IMAGE).bz2 && rm -f $(IMAGE)

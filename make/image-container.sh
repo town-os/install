@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
-# Build a Town OS disk image inside an Arch Linux container.
+# Build a Town OS disk image inside a SAME-ARCHITECTURE Arch Linux container.
 #
-# Used on non-Arch hosts, where pacstrap/arch-chroot/mkinitcpio don't exist, and
-# for cross-architecture builds. By DEFAULT the container is the host's native
-# architecture (aarch64 Arch on aarch64, x86_64 Arch on x86_64) — native CPU
-# speed, NO emulation, NO binfmt — and produces a host-arch image. Set
-# TARGET_ARCH to a different arch (e.g. TARGET_ARCH=x86_64 on aarch64) to
-# cross-build under qemu-user-static EMULATION instead; see the binfmt block.
-# The unmodified make/install.sh runs inside the builder container (see
-# Containerfile.build); the finished image is written back to the repo on the host.
+# Used on non-Arch hosts, where pacstrap/arch-chroot/mkinitcpio don't exist. The
+# container is the host's native architecture (aarch64 Arch on aarch64, x86_64
+# Arch on x86_64) — it runs at native CPU speed, with NO emulation and NO binfmt.
+# It exists only to supply Arch's build tooling; the produced image is the host's
+# architecture. The unmodified make/install.sh runs inside the builder container
+# (see Containerfile.build); the finished image is written back to the repo on the
+# host.
 set -euo pipefail
 
 IMAGE_SIZE="${1:?Usage: image-container.sh IMAGE_SIZE IMAGE}"
@@ -17,38 +16,19 @@ IMAGE="${2:?Usage: image-container.sh IMAGE_SIZE IMAGE}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Target architecture for the produced image. Defaults to the host arch (native,
-# no-emulation path). Set TARGET_ARCH to a DIFFERENT arch to cross-build under
-# emulation. Threaded from the Makefile (BUILD_ARCH) via image.sh.
-HOST_ARCH="$(uname -m)"
-TARGET_ARCH="${TARGET_ARCH:-$HOST_ARCH}"
-
-# Pick the Arch base image and podman arch for the TARGET arch. Override the base
-# via BASE_IMAGE (e.g. `BASE_IMAGE=docker.io/lopsided/archlinux make image`).
-case "$TARGET_ARCH" in
-  x86_64)  PODMAN_ARCH="amd64"; DEFAULT_BASE="docker.io/library/archlinux:latest" ;;
-  aarch64) PODMAN_ARCH="arm64"; DEFAULT_BASE="docker.io/menci/archlinuxarm:latest" ;;
-  *) echo "Unsupported TARGET_ARCH: ${TARGET_ARCH}" >&2; exit 1 ;;
-esac
-: "${BASE_IMAGE:=$DEFAULT_BASE}"
-
-# Per-arch builder tag so a cross (emulated) builder never clobbers the native one.
-BUILDER_IMAGE="town-os-builder-${TARGET_ARCH}"
-
-# Native (TARGET_ARCH == host): no platform flags, no emulation. Cross-build
-# (TARGET_ARCH != host): register qemu-user-static binfmt handlers with the F
-# ("fix-binary") flag so the emulator works inside containers without qemu in the
-# image, and pass --arch to build+run so podman pulls/runs the foreign image. This
-# is the ONLY place the build touches host binfmt, and only on explicit opt-in.
-# SLOW: pacstrap and the Rust ttyforce build run emulated.
-PLATFORM_ARGS=()
-if [ "$TARGET_ARCH" != "$HOST_ARCH" ]; then
-  echo "CROSS-BUILD: ${TARGET_ARCH} image on ${HOST_ARCH} host — EMULATED (qemu-user-static). This is slow."
-  BINFMT_IMAGE="${BINFMT_IMAGE:-docker.io/multiarch/qemu-user-static:latest}"
-  sudo podman run --rm --privileged "${BINFMT_IMAGE}" --reset -p yes
-  PLATFORM_ARGS=(--arch "${PODMAN_ARCH}")
+# Pick a same-architecture Arch base image. We never pass --arch, so podman uses
+# the host's native architecture for both build and run. The base image may be
+# overridden via the BASE_IMAGE environment variable
+# (e.g. `BASE_IMAGE=docker.io/lopsided/archlinux make image`), which is useful
+# when the default aarch64 Arch Linux ARM image isn't desired.
+if [ -z "${BASE_IMAGE:-}" ]; then
+  case "$(uname -m)" in
+    x86_64)  BASE_IMAGE="docker.io/library/archlinux:latest" ;;
+    aarch64) BASE_IMAGE="docker.io/menci/archlinuxarm:latest" ;;
+    *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+  esac
 fi
-echo "Using builder base image: ${BASE_IMAGE} (target ${TARGET_ARCH})"
+echo "Using builder base image: ${BASE_IMAGE}"
 
 # Build the builder image natively (podman layer cache makes repeat runs cheap).
 #
@@ -60,9 +40,8 @@ echo "Using builder base image: ${BASE_IMAGE} (target ${TARGET_ARCH})"
 # also makes builds immune to netavark rule flushes (a known side effect of
 # `firewall-cmd --reload`). Isolation buys nothing here — the run is already
 # --privileged, and the nested town-build container uses --network=none.
-sudo podman build --network=host "${PLATFORM_ARGS[@]}" \
-  --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
-  --build-arg "BUILD_MIRROR=${BUILD_MIRROR:-}" -t "${BUILDER_IMAGE}" \
+sudo podman build --network=host --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
+  --build-arg "BUILD_MIRROR=${BUILD_MIRROR:-}" -t town-os-builder \
   -f "$SCRIPT_DIR/Containerfile.build" "$SCRIPT_DIR"
 
 # Run the unmodified install.sh inside the container.
@@ -92,12 +71,12 @@ sudo \
   UI_IMAGE="${UI_IMAGE:-}" LOCAL_DNS="${LOCAL_DNS:-}" \
   TTYFORCE_DEV="${TTYFORCE_DEV:-}" TTYFORCE_LATEST="${TTYFORCE_LATEST:-}" \
   IMAGE_HOSTNAME="${IMAGE_HOSTNAME:-}" SERIAL_CONSOLE="${SERIAL_CONSOLE:-}" \
-  podman run --rm --privileged --cgroupns=host --network=host "${PLATFORM_ARGS[@]}" "${TTY_ARG[@]}" \
+  podman run --rm --privileged --cgroupns=host --network=host "${TTY_ARG[@]}" \
   -v /dev:/dev \
   -v "$REPO_ROOT":/build -w /build \
   -e CONTROLLER_IMAGE -e ROLODEX_IMAGE -e UI_IMAGE -e LOCAL_DNS \
   -e TTYFORCE_DEV -e TTYFORCE_LATEST -e IMAGE_HOSTNAME -e SERIAL_CONSOLE \
-  "${BUILDER_IMAGE}" /build/make/install.sh "$IMAGE_SIZE" "$IMAGE"
+  town-os-builder /build/make/install.sh "$IMAGE_SIZE" "$IMAGE"
 
 # The image is created root-owned (consistent with today's sudo native build).
 # Hand it back to the invoking user when run under sudo.
