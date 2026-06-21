@@ -12,6 +12,11 @@ CONTROLLER_TAG   ?= rc.latest-$(BUILD_ARCH)
 CONTROLLER_IMAGE ?= $(CONTROLLER_BASE):$(CONTROLLER_TAG)
 ROLODEX_IMAGE    ?= quay.io/town/rolodex:$(lastword $(subst :, ,$(CONTROLLER_IMAGE)))
 UI_IMAGE         ?= quay.io/town/ui:rc.latest-$(BUILD_ARCH)
+# The installer image carries the compressed USB image (town-os.img.bz2) for the
+# website's curl|bash installer. Same arch-suffixed tag scheme as the others:
+# `make push-installer` publishes release-$(arch) (rolling) plus a dated tag.
+INSTALLER_BASE   ?= quay.io/town/installer
+INSTALLER_TAG    ?= release-$(BUILD_ARCH)
 VM_DISK_SIZE ?= $(shell grep '^vm_disk_size:' town-os.yaml \
                   | awk '{ print $$2 }' | tr -d '"' | tr -d "'" \
                   || echo 50G)
@@ -32,7 +37,7 @@ USB_DEV     ?=
 # (console=ttyS0,115200) so the machine boots headless with no keyboard/monitor.
 SERIAL_CONSOLE ?=
 
-.PHONY: help run run-release stop image image-release qemu qemu-fg qemu-usb \
+.PHONY: help run run-release stop image image-release build-installer push-installer qemu qemu-fg qemu-usb \
         qemu-release virtualbox virtualbox-fg virtualbox-release \
         stop-qemu stop-virtualbox vm-ip serial lan-proxy clean clean-images \
         cleanup-loopback deps deps-debian release flash rebuild-qemu image-container
@@ -44,7 +49,9 @@ help:
 	@echo '  image            Build the disk image (native on Arch, else same-arch Arch container)'
 	@echo '  image-container  Force the same-arch Arch container build path (any host)'
 	@echo '  image-release    Build the image and compress it to .bz2'
-	@echo '  release          Build, compress, and publish a release'
+	@echo '  build-installer  Build the installer OCI image from town-os.img.bz2 (no push)'
+	@echo '  push-installer   Build then push the installer image (release-$(BUILD_ARCH) + dated tag)'
+	@echo '  release          Build, compress, and push the installer image'
 	@echo
 	@echo 'Run (QEMU):'
 	@echo '  qemu             Build if stale, launch QEMU in the background'
@@ -136,6 +143,21 @@ compress-release:
 
 image-release: image compress-release
 
+# Build a scratch image holding town-os.img.bz2, tagged release-$(BUILD_ARCH)
+# (rolling) and release-$(BUILD_ARCH)-$(date) (immutable). Requires the compressed
+# image to exist (run image-release first). Builds as root, like the rest of the
+# build tooling. Does NOT compress the disk image itself.
+build-installer:
+	INSTALLER_BASE=$(INSTALLER_BASE) INSTALLER_TAG=$(INSTALLER_TAG) IMAGE=$(IMAGE) \
+	  ${PWD}/make/push-installer.sh build
+
+# Push the (already built) installer image to the registry. Depends on
+# build-installer, so `make push-installer` builds then pushes — same shape as
+# `image-release: image compress-release`.
+push-installer: build-installer
+	INSTALLER_BASE=$(INSTALLER_BASE) INSTALLER_TAG=$(INSTALLER_TAG) IMAGE=$(IMAGE) \
+	  ${PWD}/make/push-installer.sh push
+
 run-release: run
 qemu-release: qemu
 virtualbox-release: virtualbox
@@ -208,5 +230,4 @@ cleanup-loopback:
 flash: $(IMAGE)
 	${PWD}/make/flash.sh $(IMAGE)
 
-release: image-release
-	RELEASE_VERSION=$(or $(RELEASE_VERSION),$(BUILD_DATE)-unstable) IMAGE=$(IMAGE) ${PWD}/make/release.sh
+release: image-release push-installer

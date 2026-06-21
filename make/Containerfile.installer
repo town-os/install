@@ -1,0 +1,18 @@
+# syntax=docker/dockerfile:1
+#
+# Town OS USB installer image.
+#
+# The final image has a single layer containing the compressed USB image at
+# /town-os.img.bz2. The website's curl|bash installer (../website install.sh)
+# pulls this image and streams that file through bzip2 into dd on the target
+# USB device. Built and pushed by make/push-installer.sh (`make push-installer`).
+#
+# The build context must contain town-os.img.bz2 (push-installer.sh hardlinks
+# the freshly compressed image in under that name).
+
+FROM scratch
+COPY town-os.img.bz2 /town-os.img.bz2
+# Dummy CMD so `podman create` (used by the website installer to stream the file
+# back out via `podman cp`) does not fail with "no command specified". The
+# container is never started.
+CMD ["/town-os.img.bz2"]

@@ -15,6 +15,10 @@ make serial      # attach to running QEMU serial console (Ctrl-] to disconnect)
 make lan-proxy   # expose the running VM to the LAN as <hostname>.local (mDNS alias + socat port relays)
 make stop        # stop all VMs
 make flash        # build image if stale, write to USB
+make image-release   # build the image and compress it to .bz2
+make build-installer # build the installer OCI image from town-os.img.bz2 (no push)
+make push-installer  # build then push to quay.io/town/installer (release-<arch> + dated tag)
+make release         # build, compress, and push the installer image
 make clean        # remove current image and VM disks
 make clean-images # remove all built images
 ```
@@ -86,6 +90,14 @@ The QEMU guest lives behind libvirt's NAT network (`virbr0`, 192.168.122.0/24): 
 - **Compatibility:** works under NetworkManager, systemd-networkd, or traditional networking — avahi binds interfaces directly, and firewalld is optional: when present and running, the listen ports are opened **runtime-only** (and removed on exit); when absent, the script prints which ports to open. Everything lan-proxy does is runtime state, fully removed on Ctrl-C.
 - Limits: TCP only; name→IP plus the relayed ports (no DNS-SD service browsing across the NAT). `make vm-ip` is unaffected (it reads virsh DHCP leases, not mDNS).
 
+### Installer Image Distribution (`make push-installer`)
+
+The compressed USB image is published to a container registry, not a file host. `make/push-installer.sh` builds a **`scratch` OCI image** from `make/Containerfile.installer` whose single layer holds the bz2 at `/town-os.img.bz2`, plus a **dummy `CMD ["/town-os.img.bz2"]`** — the website installer does `podman create` to stream the file out via `podman cp`, and a scratch image with no command makes `podman create` fail with "no command specified". The website's `curl | bash` installer (`../website/install.sh`, `public/install.sh`) `podman pull`s this image and pipes `/town-os.img.bz2` straight through `bzip2 | dd` onto the USB stick. This is the **USB disk image** channel — unrelated to the controller/rolodex/ui app images.
+
+- **Tags are arch-suffixed**, same scheme as the other images (builds are always native, so the build arch is the right suffix). `push-installer` publishes two: `release-$(uname -m)` (rolling — what the website pulls) and `release-$(uname -m)-$(date +%Y%m%d)` (immutable, captured at push time). Per-arch tags keep x86_64 and aarch64 from clobbering each other. Override the repo/rolling tag with `INSTALLER_BASE` / `INSTALLER_TAG`.
+- **`make release` = `image-release` + `push-installer`** (build → compress → push). It needs the compressed `${IMAGE}.bz2` to already exist; `make release` never builds the disk image. `make/push-installer.sh` takes a mode (`build`|`push`|`all`): **`make build-installer`** builds the OCI image only (no push), and **`make push-installer`** depends on `build-installer` so it builds then pushes — the same shape as `image-release: image compress-release`. The build and push run as **`sudo podman`** — consistent with the rest of the build tooling (`make/image-container.sh`), so the images land in root's podman storage. The build context is a temp dir with the bz2 **hardlinked** in (cp fallback if cross-fs) so podman isn't handed several GB or the whole repo; the context is user-owned and root reads it fine.
+- **The website owns only the pull side now.** The old build/push tooling (`../website/Makefile` `installer-image`/`installer-push`, `../website/Dockerfile`) was removed — this repo owns building and pushing the installer image. The earlier Gitea-release flow (`make/release.sh`) is gone; releases exist solely as registry tags.
+
 ### Host Dependencies
 
 **Arch Linux** (`make deps`):
@@ -113,6 +125,8 @@ The QEMU guest lives behind libvirt's NAT network (`virbr0`, 192.168.122.0/24): 
 | `BASE_IMAGE` | *(arch default)* | Override the same-arch Arch base image for the container build (`docker.io/library/archlinux` on x86_64, `docker.io/menci/archlinuxarm` on aarch64). Environment variable. |
 | `BUILD_MIRROR` | *(US mirror)* | Pacman mirror for the container build (full `Server` URL with `$repo`/`$arch` placeholders). Defaults to a US mirror (`ca.us.mirror.archlinuxarm.org` on aarch64, `america.mirror.pkgbuild.com` on x86_64), prepended ahead of the base image's stock mirrorlist (kept as fallback). Environment variable (flows like `BASE_IMAGE`). |
 | `LAN_PROXY_PORTS` | `80 443 5309 9090 3000 9100 2222:22` | TCP port mappings for `make lan-proxy`, space-separated `listen[:guestport]` entries (listen on the host, relay to the guest). Includes the monitoring endpoints (Prometheus 9090, Grafana 3000, node_exporter 9100). Environment variable. |
+| `INSTALLER_BASE` | `quay.io/town/installer` | Installer-image repository (no tag) that `make push-installer` builds and pushes the compressed USB image to. |
+| `INSTALLER_TAG` | `release-$(uname -m)` | Rolling installer-image tag (arch-suffixed). `make push-installer` pushes this **and** a dated `${INSTALLER_TAG}-$(date +%Y%m%d)`. The website pull script defaults to this tag. |
 
 ## Project Layout
 
@@ -121,6 +135,8 @@ make/install.sh         # Main build script — partitions, pacstraps, installs 
 make/image.sh           # Build dispatcher — native on Arch, else same-arch Arch container
 make/image-container.sh # Runs install.sh inside a same-arch Arch container (non-Arch hosts)
 make/Containerfile.build # Builder image: same-arch Arch base (BASE_IMAGE ARG) + host-side build tools
+make/push-installer.sh  # Build a scratch image holding town-os.img.bz2, push release-<arch> + dated tags
+make/Containerfile.installer # Scratch installer image: COPY town-os.img.bz2 + dummy CMD
 scripts/configure.sh    # Runs inside chroot — installs rust binaries, configures systemd
 town-os.yaml            # Build config (storage_backend, btrfs_raid_mode, vm_disk_size)
 make/                   # Helper scripts for each Makefile target
