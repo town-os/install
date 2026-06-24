@@ -29,6 +29,12 @@ VM_NAME     ?= town-os
 # two VMs sharing one VM_IP collide and the second falls back to a dynamic lease.
 # (If unset/out-of-subnet, qemu.sh derives a stable IP from VM_NAME instead.)
 VM_IP       ?= 192.168.122.50
+# IPv6 ULA /64 added to the libvirt default network so the guest gets an IPv6
+# address (SLAAC) alongside its NAT'd IPv4 — lets rolodex/Town OS be set up over
+# IPv6 too. `::1` is the gateway; the guest auto-derives a stable EUI-64 address
+# from its MAC. Set empty to disable. VM_IP6 overrides the printed guest address.
+VM_NET6_PREFIX ?= fd00:c0a8:7a
+VM_IP6      ?=
 FOREGROUND  ?=
 LOCAL_DNS   ?=
 # Physical USB block device to boot with `make qemu-usb` (e.g. /dev/sda).
@@ -164,12 +170,12 @@ virtualbox-release: virtualbox
 
 qemu: $(IMAGE)
 	VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_BRIDGE=$(VM_BRIDGE) \
-	  VM_NAME=$(VM_NAME) VM_IP=$(VM_IP) IMAGE=$(IMAGE) \
+	  VM_NAME=$(VM_NAME) VM_IP=$(VM_IP) VM_NET6_PREFIX=$(VM_NET6_PREFIX) VM_IP6=$(VM_IP6) IMAGE=$(IMAGE) \
 	  ${PWD}/make/qemu.sh $(IMAGE)
 
 qemu-fg: $(IMAGE)
 	FOREGROUND=1 VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_BRIDGE=$(VM_BRIDGE) \
-	  VM_NAME=$(VM_NAME) VM_IP=$(VM_IP) \
+	  VM_NAME=$(VM_NAME) VM_IP=$(VM_IP) VM_NET6_PREFIX=$(VM_NET6_PREFIX) VM_IP6=$(VM_IP6) \
 	  ${PWD}/make/qemu.sh $(IMAGE)
 
 # Boot QEMU (foreground) from a PHYSICAL USB device instead of the built image.
@@ -180,7 +186,7 @@ qemu-fg: $(IMAGE)
 qemu-usb:
 	@[ -n "$(USB_DEV)" ] || { echo 'error: set USB_DEV=/dev/sdX (the USB block device to boot)'; exit 1; }
 	FOREGROUND=1 USB_DEV=$(USB_DEV) VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_BRIDGE=$(VM_BRIDGE) \
-	  VM_NAME=$(VM_NAME) VM_IP=$(VM_IP) ${PWD}/make/qemu.sh $(USB_DEV)
+	  VM_NAME=$(VM_NAME) VM_IP=$(VM_IP) VM_NET6_PREFIX=$(VM_NET6_PREFIX) VM_IP6=$(VM_IP6) ${PWD}/make/qemu.sh $(USB_DEV)
 
 stop:
 	IMAGE=$(IMAGE) VM_NAME=$(VM_NAME) ${PWD}/make/stop.sh

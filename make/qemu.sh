@@ -22,6 +22,11 @@ if [ -n "${USB_DEV}" ]; then
   BOOT_SRC="${USB_DEV}"
 fi
 
+# Generate a stable random MAC in the QEMU OUI range (52:54:00:xx:xx:xx) seeded
+# from the VM name so the same VM always gets the same MAC — and, via the DHCP
+# reservation and SLAAC below, the same IPv4 and IPv6 address every boot.
+MAC=$(echo "${VM_NAME:-town-os}" | md5sum | sed 's/^\(..\)\(..\)\(..\).*/52:54:00:\1:\2:\3/')
+
 # Point libvirt's NAT resolver at the HOST's real upstream DNS so the guest
 # inherits the same servers the host got from the local network's DHCP.
 #
@@ -95,6 +100,46 @@ if command -v virsh >/dev/null 2>&1 \
       rm -f "${DNS_TMPXML}"
     fi
   fi
+fi
+
+# Give the guest an IPv6 address alongside its NAT'd IPv4 so rolodex and Town OS
+# can be set up over IPv6 too. We add a ULA /64 to the libvirt 'default' network
+# and rely on SLAAC (a router-advertised prefix, NO DHCPv6) rather than a v6 DHCP
+# reservation. WHY SLAAC: DHCPv6 keys leases on the client DUID, which the guest
+# regenerates every boot (read-only squashfs root, nothing persisted — the same
+# churn the IPv4 reservation above works around), and libvirt cannot pin a v6
+# lease by MAC the way it can for IPv4. SLAAC instead derives a STABLE EUI-64
+# address from the guest's stable MAC, so the address is deterministic — computed
+# and printed below, no reservation needed. Set VM_NET6_PREFIX= (empty) to skip.
+# Like the DNS-forwarder edit, this only rewrites the PERSISTENT network
+# definition; it takes effect on the network's next cold start (the bridge-ensure
+# block below when virbr0 is absent, or a manual net-destroy + net-start).
+VM_NET6_PREFIX="${VM_NET6_PREFIX:-fd00:c0a8:7a}"   # ULA /64; ::1 is the gateway
+if [ -n "${VM_NET6_PREFIX}" ] && command -v virsh >/dev/null 2>&1 \
+   && [ "$(sudo virsh net-info default 2>/dev/null | awk '/^Bridge:/{print $2}')" = "${VM_BRIDGE}" ]; then
+  # Guest's stable SLAAC address: EUI-64 interface id from the stable MAC
+  # 52:54:00:o4:o5:o6 -> ::5054:ff:fe<o4>:<o5><o6> (U/L bit of 0x52 flipped to
+  # 0x50, ff:fe inserted). VM_IP6 overrides the printed address if you statically
+  # assign one in the guest instead.
+  O4=$(echo "${MAC}" | cut -d: -f4); O5=$(echo "${MAC}" | cut -d: -f5); O6=$(echo "${MAC}" | cut -d: -f6)
+  GUEST_IP6="${VM_IP6:-${VM_NET6_PREFIX}::5054:ff:fe${O4}:${O5}${O6}}"
+  if ! sudo virsh net-dumpxml --inactive default 2>/dev/null | grep -q "family='ipv6'"; then
+    IP6_BLOCK="  <ip family='ipv6' address='${VM_NET6_PREFIX}::1' prefix='64'/>"
+    IP6_NEW_XML=$(sudo virsh net-dumpxml --inactive default 2>/dev/null \
+      | awk -v ins="${IP6_BLOCK}" '/<\/network>/ && !done { print ins; done=1 } { print }')
+    IP6_TMPXML=$(mktemp)
+    printf '%s\n' "${IP6_NEW_XML}" > "${IP6_TMPXML}"
+    if sudo virsh net-define "${IP6_TMPXML}" >/dev/null 2>&1; then
+      if ip link show "${VM_BRIDGE}" >/dev/null 2>&1; then
+        echo "Added IPv6 ${VM_NET6_PREFIX}::/64 to libvirt 'default' (gateway ${VM_NET6_PREFIX}::1);"
+        echo "  applies on the network's next restart: sudo virsh net-destroy default && sudo virsh net-start default"
+      else
+        echo "Added IPv6 ${VM_NET6_PREFIX}::/64 to libvirt 'default' (gateway ${VM_NET6_PREFIX}::1)"
+      fi
+    fi
+    rm -f "${IP6_TMPXML}"
+  fi
+  echo "Guest IPv6 (SLAAC, stable): ${GUEST_IP6}"
 fi
 
 # The VM attaches to the libvirt 'default' NAT bridge via qemu-bridge-helper.
@@ -257,10 +302,6 @@ else
   DAEMON_ARGS=(-pidfile qemu.pid)
   SERIAL_ARGS=(-nographic -serial mon:stdio)
 fi
-
-# Generate a stable random MAC in the QEMU OUI range (52:54:00:xx:xx:xx)
-# seeded from the VM name so the same VM always gets the same MAC/IP
-MAC=$(echo "${VM_NAME:-town-os}" | md5sum | sed 's/^\(..\)\(..\)\(..\).*/52:54:00:\1:\2:\3/')
 
 # Pin a stable DHCP lease for this VM via a MAC-keyed reservation on libvirt's
 # default network. WHY: the guest presents a fresh DHCP client-id (a dhcpcd
