@@ -168,6 +168,37 @@ if ! ip link show "${VM_BRIDGE}" >/dev/null 2>&1; then
   fi
 fi
 
+# Make the IPv6 block (and any other persistent-only edits above, e.g. the DNS
+# forwarders) actually LIVE for the guest about to boot. net-define only updates
+# the PERSISTENT config, so a network that was already running still lacks IPv6
+# until a cold start — the guest's dhcpcd would then see no RA/DHCPv6 and get no
+# v6 address. If the running 'default' network is missing the IPv6 we want, cold-
+# start it now — but ONLY when no other VM is attached to the bridge, since
+# net-destroy would cut co-running VMs (the bridge's own ${VM_BRIDGE}-nic stub
+# doesn't count). With other VMs present we leave it and print how to apply later.
+if [ -n "${VM_NET6_PREFIX}" ] && command -v virsh >/dev/null 2>&1 \
+   && [ "$(sudo virsh net-info default 2>/dev/null | awk '/^Bridge:/{print $2}')" = "${VM_BRIDGE}" ] \
+   && ! sudo virsh net-dumpxml default 2>/dev/null | grep -q "family='ipv6'"; then
+  # Any bridge member other than the network's own ${VM_BRIDGE}-nic stub means a
+  # VM tap is attached. Glob the brif dir directly (never parse `ls` — it may be
+  # aliased); the [ -e ] guard handles an unexpanded glob under `set -u`.
+  OTHER_TAPS=""
+  for _m in "/sys/class/net/${VM_BRIDGE}/brif/"*; do
+    [ -e "${_m}" ] || continue
+    [ "${_m##*/}" = "${VM_BRIDGE}-nic" ] && continue
+    OTHER_TAPS="x"; break
+  done
+  if [ -z "${OTHER_TAPS}" ]; then
+    if sudo virsh net-destroy default >/dev/null 2>&1 && sudo virsh net-start default >/dev/null 2>&1; then
+      for _ in $(seq 1 10); do ip link show "${VM_BRIDGE}" >/dev/null 2>&1 && break; sleep 0.5; done
+      echo "Cold-started libvirt 'default' so this guest gets IPv6 (no other VMs were attached)."
+    fi
+  else
+    echo "NOTE: libvirt 'default' is running WITHOUT IPv6 and other VMs are on ${VM_BRIDGE};"
+    echo "      this guest won't get IPv6 until: sudo virsh net-destroy default && sudo virsh net-start default"
+  fi
+fi
+
 # Re-assert mDNS on the bridge: resolvectl's per-link setting is runtime-only
 # and is lost whenever the bridge is recreated (e.g. every reboot), breaking
 # guest .local resolution (vm-ip.sh). Idempotent, so do it every launch.
