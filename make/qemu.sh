@@ -115,6 +115,25 @@ fi
 # definition; it takes effect on the network's next cold start (the bridge-ensure
 # block below when virbr0 is absent, or a manual net-destroy + net-start).
 VM_NET6_PREFIX="${VM_NET6_PREFIX:-fd00:c0a8:7a}"   # ULA /64; ::1 is the gateway
+
+# Only give the guest IPv6 when the bridge it attaches to (${VM_BRIDGE}) itself
+# carries a DHCP/RA-allocated routable IPv6. The ULA we'd hand the guest is not
+# globally routable and libvirt's default NAT does not carry IPv6, so on the
+# standard dev VM — and the ttyforce setup generally — the guest v6 address is
+# dead weight. It is only useful when the bridge is wired to a network that
+# hands out real IPv6 (a host bridge onto a v6-capable LAN), which shows up as a
+# global, dynamically assigned (SLAAC/DHCPv6) address on ${VM_BRIDGE}. Our own
+# static ULA ::1 is permanent, so it never matches `dynamic` and can't trip this
+# check. Blanking VM_NET6_PREFIX makes the two IPv6 blocks below skip cleanly;
+# set VM_NET6_FORCE=1 to add the guest v6 regardless.
+if [ -n "${VM_NET6_PREFIX}" ] && [ -z "${VM_NET6_FORCE:-}" ]; then
+  if ! ip -6 addr show dev "${VM_BRIDGE}" scope global dynamic 2>/dev/null | grep -q "inet6 "; then
+    echo "Skipping guest IPv6: ${VM_BRIDGE} has no DHCP-allocated routable IPv6"
+    echo "  (the ULA isn't routable and libvirt's NAT doesn't carry IPv6). Set VM_NET6_FORCE=1 to override."
+    VM_NET6_PREFIX=""
+  fi
+fi
+
 if [ -n "${VM_NET6_PREFIX}" ] && command -v virsh >/dev/null 2>&1 \
    && [ "$(sudo virsh net-info default 2>/dev/null | awk '/^Bridge:/{print $2}')" = "${VM_BRIDGE}" ]; then
   # Guest's stable SLAAC address: EUI-64 interface id from the stable MAC
