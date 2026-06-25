@@ -35,11 +35,16 @@ mount_town_os() {
 }
 
 prepare_networking() {
-    # Create directories dhcpcd needs — ttyforce --initrd handles the rest
-    mkdir -p /var/db/dhcpcd /var/run/dhcpcd /etc /etc/systemd/network
+    # Seed a minimal /etc so ttyforce has somewhere to write its bootstrap
+    # resolv.conf fallback. The dhcpcd run/lease directories are created by
+    # ttyforce itself (initrd_ops::network::prepare_dhcpcd_dirs) right before it
+    # launches dhcpcd, so the lease (and its DHCP-offered DNS) is persisted and
+    # readable — keeping that ownership in ttyforce, not split across this hook.
+    mkdir -p /etc /etc/systemd/network
     cat > /etc/resolv.conf <<RESOLV
-nameserver 1.1.1.1
 nameserver 8.8.8.8
+nameserver 8.8.4.4
+nameserver 1.1.1.1
 RESOLV
 }
 

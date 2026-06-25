@@ -54,15 +54,43 @@ else
   - "8.8.8.8:53"'
 fi
 
+# Build the DNS bind list. We always bind loopback so systemd-resolved can reach
+# rolodex locally over BOTH protocols: 127.0.0.2 (resolved's first DNS= entry)
+# and ::1 (its IPv6 counterpart — see scripts/configure.sh). On top of that we
+# bind every GLOBAL-scope address on the default-route interface so rolodex is
+# reachable EXTERNALLY on the host's routable IPv4 and IPv6 addresses (other LAN
+# hosts, upstream clients). We enumerate the addresses here and emit literals
+# rather than using rolodex's `primary`/interface tokens because: `primary` is
+# IPv4-only (it derives the address from a UDP connect to 8.8.8.8), and an
+# interface token would also hand rolodex link-local fe80:: addresses, which
+# cannot be bound without a scope id and would log a bind error every start.
+# Filtering to `scope global` drops link-local and loopback cleanly.
+binds=""
+add_bind() {  # $1 = bare IP literal (v4 or v6, unbracketed)
+  case "$1" in
+    *:*) b="[$1]:53" ;;
+    *)   b="$1:53" ;;
+  esac
+  binds="${binds}    - udp: \"${b}\"
+    - tcp: \"${b}\"
+"
+}
+add_bind 127.0.0.2
+add_bind ::1
+primary_if="$(ip route show default 2>/dev/null \
+  | awk '{ for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit } }')"
+if [ -n "$primary_if" ]; then
+  for ip in $(ip -o addr show dev "$primary_if" scope global 2>/dev/null \
+    | awk '{ print $4 }' | cut -d/ -f1); do
+    add_bind "$ip"
+  done
+fi
+
 cat > "$CONF" <<EOF
 database_path: /data/rolodex.db
 dns:
   bind:
-    - udp: "primary:53"
-    - udp: "127.0.0.2:53"
-    - tcp: "primary:53"
-    - tcp: "127.0.0.2:53"
-grpc:
+${binds}grpc:
   tcp_bind: ""
   unix_socket: /data/rolodex.sock
   shared_secret: ""

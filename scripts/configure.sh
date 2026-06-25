@@ -103,21 +103,23 @@ sed -i \
 mkdir -p /var/log/journal
 # Can't symlink during chroot (bind-mounted), so make/install.sh handles it after chroot exits
 
-# Configure systemd-resolved as the DNS broker: prefer rolodex (127.0.0.2)
-# when available, fall through to Cloudflare/Google on failure. resolved
-# cycles through DNS= servers on timeout and caches which are dead, so a
-# rolodex outage degrades to the upstreams automatically. mDNS is enabled
-# for .local hostname advertisement (replaces avahi-daemon).
+# Configure systemd-resolved as the DNS broker: prefer rolodex (127.0.0.2 over
+# IPv4, ::1 over IPv6) when available, fall through to Cloudflare/Google on
+# failure. resolved cycles through DNS= servers on timeout and caches which are
+# dead, so a rolodex outage degrades to the upstreams automatically. mDNS is
+# enabled for .local hostname advertisement (replaces avahi-daemon).
 #
-# Note: the DNS= entries after 127.0.0.2 are only consulted if rolodex itself
-# is unreachable — in normal operation rolodex answers every query and chooses
-# its OWN upstream (DHCP-provided DNS, else 1.1.1.1/8.8.8.8) per
-# scripts/rolodex-config.sh. That is where DHCP DNS is honored; resolved always
-# hits rolodex first.
+# rolodex binds both loopbacks (127.0.0.2 + [::1]) in scripts/rolodex-config.sh,
+# so both entries below reach the same rolodex; the v6 entry gives resolved an
+# IPv6 path to it. Note: the DNS= entries after the two rolodex loopbacks are
+# only consulted if rolodex itself is unreachable — in normal operation rolodex
+# answers every query and chooses its OWN upstream (DHCP-provided DNS, else
+# 1.1.1.1/8.8.8.8) per scripts/rolodex-config.sh. That is where DHCP DNS is
+# honored; resolved always hits rolodex first.
 mkdir -p /etc/systemd/resolved.conf.d
 cat >/etc/systemd/resolved.conf.d/townos.conf <<RESOLVED
 [Resolve]
-DNS=127.0.0.2 1.1.1.1 8.8.8.8
+DNS=127.0.0.2 ::1 1.1.1.1 8.8.8.8
 FallbackDNS=1.1.1.1 8.8.8.8
 DNSStubListener=yes
 DNSStubListenerExtra=
