@@ -139,31 +139,63 @@ if [ -n "${VM_NET6_PREFIX}" ] && [ -z "${VM_NET6_FORCE:-}" ]; then
   fi
 fi
 
-if [ -n "${VM_NET6_PREFIX}" ] && command -v virsh >/dev/null 2>&1 \
+# Reconcile the guest IPv6 block on libvirt's 'default' network with whether we
+# actually WANT to give the guest v6 (VM_NET6_PREFIX non-empty after the
+# reachability gate above). This must work in BOTH directions: add the block when
+# we want v6 and it's absent, AND remove it when we don't want v6 but a previous
+# run (on a v6-capable network) left the block behind. The removal half is not
+# optional: without it, a guest booted on a v6-less network still gets a SLAAC
+# address and a libvirt-advertised v6 DEFAULT ROUTE that goes nowhere (libvirt
+# does not NAT IPv6), so happy-eyeballs / AAAA lookups in ttyforce's initrd reach
+# for dead v6 and report "can't connect externally" even though IPv4 NAT works.
+# Only touch the 'default' network when its bridge is the one we attach to. Writes
+# only the PERSISTENT definition; the cold-start block below makes it live.
+if command -v virsh >/dev/null 2>&1 \
    && [ "$(sudo virsh net-info default 2>/dev/null | awk '/^Bridge:/{print $2}')" = "${VM_BRIDGE}" ]; then
-  # Guest's stable SLAAC address: EUI-64 interface id from the stable MAC
-  # 52:54:00:o4:o5:o6 -> ::5054:ff:fe<o4>:<o5><o6> (U/L bit of 0x52 flipped to
-  # 0x50, ff:fe inserted). VM_IP6 overrides the printed address if you statically
-  # assign one in the guest instead.
-  O4=$(echo "${MAC}" | cut -d: -f4); O5=$(echo "${MAC}" | cut -d: -f5); O6=$(echo "${MAC}" | cut -d: -f6)
-  GUEST_IP6="${VM_IP6:-${VM_NET6_PREFIX}::5054:ff:fe${O4}:${O5}${O6}}"
-  if ! sudo virsh net-dumpxml --inactive default 2>/dev/null | grep -q "family='ipv6'"; then
-    IP6_BLOCK="  <ip family='ipv6' address='${VM_NET6_PREFIX}::1' prefix='64'/>"
+  HAS_V6_PERSIST=""
+  sudo virsh net-dumpxml --inactive default 2>/dev/null | grep -q "family='ipv6'" && HAS_V6_PERSIST="x"
+  if [ -n "${VM_NET6_PREFIX}" ]; then
+    # Want v6. Guest's stable SLAAC address: EUI-64 interface id from the stable
+    # MAC 52:54:00:o4:o5:o6 -> ::5054:ff:fe<o4>:<o5><o6> (U/L bit of 0x52 flipped
+    # to 0x50, ff:fe inserted). VM_IP6 overrides the printed address if you
+    # statically assign one in the guest instead.
+    O4=$(echo "${MAC}" | cut -d: -f4); O5=$(echo "${MAC}" | cut -d: -f5); O6=$(echo "${MAC}" | cut -d: -f6)
+    GUEST_IP6="${VM_IP6:-${VM_NET6_PREFIX}::5054:ff:fe${O4}:${O5}${O6}}"
+    if [ -z "${HAS_V6_PERSIST}" ]; then
+      IP6_BLOCK="  <ip family='ipv6' address='${VM_NET6_PREFIX}::1' prefix='64'/>"
+      IP6_NEW_XML=$(sudo virsh net-dumpxml --inactive default 2>/dev/null \
+        | awk -v ins="${IP6_BLOCK}" '/<\/network>/ && !done { print ins; done=1 } { print }')
+      IP6_TMPXML=$(mktemp)
+      printf '%s\n' "${IP6_NEW_XML}" > "${IP6_TMPXML}"
+      if sudo virsh net-define "${IP6_TMPXML}" >/dev/null 2>&1; then
+        if ip link show "${VM_BRIDGE}" >/dev/null 2>&1; then
+          echo "Added IPv6 ${VM_NET6_PREFIX}::/64 to libvirt 'default' (gateway ${VM_NET6_PREFIX}::1);"
+          echo "  applies on the network's next restart: sudo virsh net-destroy default && sudo virsh net-start default"
+        else
+          echo "Added IPv6 ${VM_NET6_PREFIX}::/64 to libvirt 'default' (gateway ${VM_NET6_PREFIX}::1)"
+        fi
+      fi
+      rm -f "${IP6_TMPXML}"
+    fi
+    echo "Guest IPv6 (SLAAC, stable): ${GUEST_IP6}"
+  elif [ -n "${HAS_V6_PERSIST}" ]; then
+    # Don't want v6 but a stale block is present (we moved to a v6-less network):
+    # strip every <ip family='ipv6'> block. awk drops a self-closing tag outright,
+    # otherwise skips through the matching </ip>.
     IP6_NEW_XML=$(sudo virsh net-dumpxml --inactive default 2>/dev/null \
-      | awk -v ins="${IP6_BLOCK}" '/<\/network>/ && !done { print ins; done=1 } { print }')
+      | awk '
+          /<ip family=.ipv6./ { if ($0 ~ /\/>/) next; skip=1; next }
+          skip && /<\/ip>/     { skip=0; next }
+          skip                 { next }
+          { print }')
     IP6_TMPXML=$(mktemp)
     printf '%s\n' "${IP6_NEW_XML}" > "${IP6_TMPXML}"
     if sudo virsh net-define "${IP6_TMPXML}" >/dev/null 2>&1; then
-      if ip link show "${VM_BRIDGE}" >/dev/null 2>&1; then
-        echo "Added IPv6 ${VM_NET6_PREFIX}::/64 to libvirt 'default' (gateway ${VM_NET6_PREFIX}::1);"
-        echo "  applies on the network's next restart: sudo virsh net-destroy default && sudo virsh net-start default"
-      else
-        echo "Added IPv6 ${VM_NET6_PREFIX}::/64 to libvirt 'default' (gateway ${VM_NET6_PREFIX}::1)"
-      fi
+      echo "Removed stale guest IPv6 from libvirt 'default' (host has no working v6 route);"
+      echo "  the dead v6 default route was breaking the guest's external-connectivity check."
     fi
     rm -f "${IP6_TMPXML}"
   fi
-  echo "Guest IPv6 (SLAAC, stable): ${GUEST_IP6}"
 fi
 
 # The VM attaches to the libvirt 'default' NAT bridge via qemu-bridge-helper.
@@ -192,34 +224,43 @@ if ! ip link show "${VM_BRIDGE}" >/dev/null 2>&1; then
   fi
 fi
 
-# Make the IPv6 block (and any other persistent-only edits above, e.g. the DNS
-# forwarders) actually LIVE for the guest about to boot. net-define only updates
-# the PERSISTENT config, so a network that was already running still lacks IPv6
-# until a cold start — the guest's dhcpcd would then see no RA/DHCPv6 and get no
-# v6 address. If the running 'default' network is missing the IPv6 we want, cold-
-# start it now — but ONLY when no other VM is attached to the bridge, since
-# net-destroy would cut co-running VMs (the bridge's own ${VM_BRIDGE}-nic stub
-# doesn't count). With other VMs present we leave it and print how to apply later.
-if [ -n "${VM_NET6_PREFIX}" ] && command -v virsh >/dev/null 2>&1 \
-   && [ "$(sudo virsh net-info default 2>/dev/null | awk '/^Bridge:/{print $2}')" = "${VM_BRIDGE}" ] \
-   && ! sudo virsh net-dumpxml default 2>/dev/null | grep -q "family='ipv6'"; then
-  # Any bridge member other than the network's own ${VM_BRIDGE}-nic stub means a
-  # VM tap is attached. Glob the brif dir directly (never parse `ls` — it may be
-  # aliased); the [ -e ] guard handles an unexpanded glob under `set -u`.
-  OTHER_TAPS=""
-  for _m in "/sys/class/net/${VM_BRIDGE}/brif/"*; do
-    [ -e "${_m}" ] || continue
-    [ "${_m##*/}" = "${VM_BRIDGE}-nic" ] && continue
-    OTHER_TAPS="x"; break
-  done
-  if [ -z "${OTHER_TAPS}" ]; then
-    if sudo virsh net-destroy default >/dev/null 2>&1 && sudo virsh net-start default >/dev/null 2>&1; then
-      for _ in $(seq 1 10); do ip link show "${VM_BRIDGE}" >/dev/null 2>&1 && break; sleep 0.5; done
-      echo "Cold-started libvirt 'default' so this guest gets IPv6 (no other VMs were attached)."
+# Make the persistent-only edits above (the IPv6 block AND the DNS forwarders)
+# actually LIVE for the guest about to boot. net-define only updates the
+# PERSISTENT config, so a network that was already running keeps its OLD v6 state
+# and OLD forwarders until a cold start. Both directions of drift break the guest:
+# a stale v6 block gives it a dead v6 default route, and stale forwarders point
+# its DNS at a previous network's servers (e.g. 50.0.1.1 after a WiFi change) so
+# resolution and ttyforce's external check fail. Cold-start when the LIVE network
+# disagrees with the PERSISTENT definition we just wrote — but ONLY when no other
+# VM is attached to the bridge, since net-destroy would cut co-running VMs (the
+# bridge's own ${VM_BRIDGE}-nic stub doesn't count). With other VMs present we
+# leave it and print how to apply later.
+if command -v virsh >/dev/null 2>&1 \
+   && [ "$(sudo virsh net-info default 2>/dev/null | awk '/^Bridge:/{print $2}')" = "${VM_BRIDGE}" ]; then
+  LIVE_XML=$(sudo virsh net-dumpxml default 2>/dev/null)
+  PERSIST_XML=$(sudo virsh net-dumpxml --inactive default 2>/dev/null)
+  _v6_state() { printf '%s\n' "$1" | grep -q "family='ipv6'" && echo v6 || echo no6; }
+  _fwd_state() { printf '%s\n' "$1" | grep -oE "<forwarder addr='[0-9.]+'/>" | sort | tr '\n' ' '; }
+  if [ "$(_v6_state "${LIVE_XML}")" != "$(_v6_state "${PERSIST_XML}")" ] \
+     || [ "$(_fwd_state "${LIVE_XML}")" != "$(_fwd_state "${PERSIST_XML}")" ]; then
+    # Any bridge member other than the network's own ${VM_BRIDGE}-nic stub means a
+    # VM tap is attached. Glob the brif dir directly (never parse `ls` — it may be
+    # aliased); the [ -e ] guard handles an unexpanded glob under `set -u`.
+    OTHER_TAPS=""
+    for _m in "/sys/class/net/${VM_BRIDGE}/brif/"*; do
+      [ -e "${_m}" ] || continue
+      [ "${_m##*/}" = "${VM_BRIDGE}-nic" ] && continue
+      OTHER_TAPS="x"; break
+    done
+    if [ -z "${OTHER_TAPS}" ]; then
+      if sudo virsh net-destroy default >/dev/null 2>&1 && sudo virsh net-start default >/dev/null 2>&1; then
+        for _ in $(seq 1 10); do ip link show "${VM_BRIDGE}" >/dev/null 2>&1 && break; sleep 0.5; done
+        echo "Cold-started libvirt 'default' to apply pending IPv6/DNS-forwarder changes (no other VMs were attached)."
+      fi
+    else
+      echo "NOTE: libvirt 'default' has pending IPv6/DNS-forwarder changes and other VMs are on ${VM_BRIDGE};"
+      echo "      this guest won't pick them up until: sudo virsh net-destroy default && sudo virsh net-start default"
     fi
-  else
-    echo "NOTE: libvirt 'default' is running WITHOUT IPv6 and other VMs are on ${VM_BRIDGE};"
-    echo "      this guest won't get IPv6 until: sudo virsh net-destroy default && sudo virsh net-start default"
   fi
 fi
 
