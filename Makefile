@@ -156,16 +156,26 @@ image: $(IMAGE)
 image-container: $(IMAGE_SOURCES) .build-config
 	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) TTYFORCE_DEV=$(TTYFORCE_DEV) TTYFORCE_LATEST=$(TTYFORCE_LATEST) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) SERIAL_CONSOLE=$(SERIAL_CONSOLE) RPI=$(RPI) ${PWD}/make/image-container.sh $(IMAGE_SIZE) $(IMAGE)
 
-compress-release:
-	sudo pv $(IMAGE) | lbzip2 > $(IMAGE).bz2 && rm -f $(IMAGE)
+# Compressed release image, as a real file target so it is NOT rebuilt when the
+# .bz2 is already fresh. It depends on the image's *sources* rather than on
+# $(IMAGE): the raw image is deleted right after compression to save disk, so a
+# dependency on $(IMAGE) would see it missing and force a needless second image
+# build every time. The recipe (re)builds the raw image only if its own sources
+# changed, then compresses and removes it.
+$(IMAGE).bz2: $(IMAGE_SOURCES) .build-config
+	$(MAKE) $(IMAGE)
+	sudo pv $(IMAGE) | lbzip2 > $@ && rm -f $(IMAGE)
 
-image-release: image compress-release
+compress-release: $(IMAGE).bz2
+
+image-release: $(IMAGE).bz2
 
 # Build a scratch image holding town-os.img.bz2, tagged release-$(BUILD_ARCH)
-# (rolling) and release-$(BUILD_ARCH)-$(date) (immutable). Requires the compressed
-# image to exist (run image-release first). Builds as root, like the rest of the
-# build tooling. Does NOT compress the disk image itself.
-build-installer:
+# (rolling) and release-$(BUILD_ARCH)-$(date) (immutable). Depends on the
+# compressed image file so it is built once if stale and reused if already
+# fresh (no double image build). Builds as root, like the rest of the build
+# tooling. Does NOT compress the disk image itself.
+build-installer: $(IMAGE).bz2
 	INSTALLER_BASE=$(INSTALLER_BASE) INSTALLER_TAG=$(INSTALLER_TAG) IMAGE=$(IMAGE) \
 	  ${PWD}/make/push-installer.sh build
 
@@ -248,4 +258,4 @@ cleanup-loopback:
 flash: $(IMAGE)
 	${PWD}/make/flash.sh $(IMAGE)
 
-release: image-release push-installer
+release: push-installer
