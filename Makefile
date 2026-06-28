@@ -19,8 +19,11 @@ UI_IMAGE         ?= quay.io/town/ui:rc.latest-$(BUILD_ARCH)
 # The installer image carries the compressed USB image (town-os.img.bz2) for the
 # website's curl|bash installer. Same arch-suffixed tag scheme as the others:
 # `make push-installer` publishes release-$(arch) (rolling) plus a dated tag.
+# RPI=1 publishes to a SEPARATE tag (release-$(arch)-rpi) so the Raspberry Pi
+# installer image never clobbers the PC one — matching the distinct -rpi image
+# filename. The website installer pulls the -rpi tag when given RPI=1.
 INSTALLER_BASE   ?= quay.io/town/installer
-INSTALLER_TAG    ?= release-$(BUILD_ARCH)
+INSTALLER_TAG    ?= release-$(BUILD_ARCH)$(if $(RPI),-rpi)
 VM_DISK_SIZE ?= $(shell grep '^vm_disk_size:' town-os.yaml \
                   | awk '{ print $$2 }' | tr -d '"' | tr -d "'" \
                   || echo 50G)
