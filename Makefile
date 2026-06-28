@@ -2,7 +2,11 @@ BUILD_DATE       := $(shell date +%Y-%m-%d)
 # Builds are always native, so the host arch (uname -m) is the image arch. Tag
 # the filename with it so x86_64 and aarch64 images don't get confused.
 BUILD_ARCH       := $(shell uname -m)
-IMAGE            ?= town-os-$(BUILD_DATE)-$(BUILD_ARCH).img
+# RPI=1 produces a fundamentally different (native-boot Raspberry Pi) image, so
+# give it a distinct filename: it is a SEPARATE make target/artifact that coexists
+# with the normal UEFI/GRUB image instead of clobbering it. `make image` ->
+# town-os-DATE-ARCH.img; `make image RPI=1` -> town-os-DATE-ARCH-rpi.img.
+IMAGE            ?= town-os-$(BUILD_DATE)-$(BUILD_ARCH)$(if $(RPI),-rpi).img
 IMAGE_SIZE       ?= 12G
 # Image tags are arch-suffixed (rc.latest-x86_64 / rc.latest-aarch64): each
 # repository publishes per-arch tags rather than a multi-arch manifest. Builds
