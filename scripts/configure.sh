@@ -36,6 +36,16 @@ echo "${IMAGE_HOSTNAME:-town-os}" >/etc/hostname
 # Note: no zstd module needed — the squashfs root is gzip-compressed (zlib is
 # built into the kernel), and zstd squashfs support is absent on aarch64.
 WANT_MODULES="loop overlay squashfs nf_tables ahci sd_mod virtio_blk virtio_scsi nvme usb_storage uas e1000 e1000e igb ixgbe i40e ice virtio_net r8169 tg3 bnxt_en mlx4_en mlx5_core cfg80211 mac80211 iwlwifi iwlmvm ath9k ath10k_pci ath11k_pci brcmfmac mt76x2u rtw88_pci rtw89_pci"
+
+# Raspberry Pi (linux-rpi) storage/USB/PCIe/net drivers, so the read-only root and
+# the btrfs data disks come up on Pi 4/5 hardware: the SD/eMMC host (sdhci-iproc),
+# PCIe root (pcie-brcmstb — gates Pi 4 USB3 and Pi 5 NVMe/RP1), USB host, and the
+# onboard Ethernet MACs (bcmgenet on Pi 4, macb on Pi 5). Names not present for
+# the installed kernel are filtered out below, so this is a no-op on the
+# linux-aarch64 (qemu) and x86_64 builds; many of these are built-in (=y) in the
+# rpi kernel, in which case mkinitcpio simply skips them. Exact Pi 5 RP1/Ethernet
+# module names may need verification on real hardware.
+WANT_MODULES="$WANT_MODULES sdhci_iproc sdhci_pltfm mmc_block bcm2835 pcie_brcmstb xhci_pci xhci_hcd dwc2 dwc3 phy_broadcom bcmgenet macb mdio_bcm_unimac broadcom lan78xx vc4"
 KVER="$(ls -1 /usr/lib/modules | head -1)"
 HAVE_MODULES=""
 for m in $WANT_MODULES; do

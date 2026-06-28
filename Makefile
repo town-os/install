@@ -43,6 +43,11 @@ USB_DEV     ?=
 # (console=ttyS0,115200) so the machine boots headless with no keyboard/monitor.
 SERIAL_CONSOLE ?=
 
+# When non-empty, build a native-boot Raspberry Pi image (Pi 4/400/CM4, Pi 5/CM5)
+# instead of the UEFI/GRUB image: linux-rpi kernel + GPU firmware + config.txt on
+# the FAT partition, no GRUB. aarch64-only (build on an aarch64 host).
+RPI ?=
+
 .PHONY: help run run-release stop image image-release build-installer push-installer qemu qemu-fg qemu-usb \
         qemu-release virtualbox virtualbox-fg virtualbox-release \
         stop-qemu stop-virtualbox vm-ip serial lan-proxy clean clean-images \
@@ -96,6 +101,7 @@ help:
 	@echo '  CONTROLLER_IMAGE=$(CONTROLLER_IMAGE)'
 	@echo '  IMAGE_HOSTNAME, LOCAL_DNS, TTYFORCE_DEV, TTYFORCE_LATEST, KEEP_MOUNT'
 	@echo '  SERIAL_CONSOLE   Set non-empty to default the image to a serial console (no keyboard)'
+	@echo '  RPI              Set non-empty to build a native Raspberry Pi image (Pi 4+; aarch64 host only)'
 
 rebuild-qemu: stop clean image qemu
 
@@ -121,6 +127,7 @@ FORCE:
 	  'IMAGE_HOSTNAME=$(IMAGE_HOSTNAME)' \
 	  'LOCAL_DNS=$(LOCAL_DNS)' \
 	  'SERIAL_CONSOLE=$(SERIAL_CONSOLE)' \
+	  'RPI=$(RPI)' \
 	  'IMAGE_SIZE=$(IMAGE_SIZE)' | cmp -s - $@ || \
 	printf '%s\n' \
 	  'CONTROLLER_IMAGE=$(CONTROLLER_IMAGE)' \
@@ -131,10 +138,11 @@ FORCE:
 	  'IMAGE_HOSTNAME=$(IMAGE_HOSTNAME)' \
 	  'LOCAL_DNS=$(LOCAL_DNS)' \
 	  'SERIAL_CONSOLE=$(SERIAL_CONSOLE)' \
+	  'RPI=$(RPI)' \
 	  'IMAGE_SIZE=$(IMAGE_SIZE)' > $@
 
 $(IMAGE): $(IMAGE_SOURCES) .build-config
-	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) TTYFORCE_DEV=$(TTYFORCE_DEV) TTYFORCE_LATEST=$(TTYFORCE_LATEST) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) SERIAL_CONSOLE=$(SERIAL_CONSOLE) ${PWD}/make/image.sh $(IMAGE_SIZE) $(IMAGE)
+	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) TTYFORCE_DEV=$(TTYFORCE_DEV) TTYFORCE_LATEST=$(TTYFORCE_LATEST) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) SERIAL_CONSOLE=$(SERIAL_CONSOLE) RPI=$(RPI) ${PWD}/make/image.sh $(IMAGE_SIZE) $(IMAGE)
 
 image: $(IMAGE)
 
@@ -142,7 +150,7 @@ image: $(IMAGE)
 # an x86_64 Arch container). On non-Arch hosts `make image` already dispatches
 # here automatically; this target also lets you force it on an Arch host.
 image-container: $(IMAGE_SOURCES) .build-config
-	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) TTYFORCE_DEV=$(TTYFORCE_DEV) TTYFORCE_LATEST=$(TTYFORCE_LATEST) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) SERIAL_CONSOLE=$(SERIAL_CONSOLE) ${PWD}/make/image-container.sh $(IMAGE_SIZE) $(IMAGE)
+	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) TTYFORCE_DEV=$(TTYFORCE_DEV) TTYFORCE_LATEST=$(TTYFORCE_LATEST) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) SERIAL_CONSOLE=$(SERIAL_CONSOLE) RPI=$(RPI) ${PWD}/make/image-container.sh $(IMAGE_SIZE) $(IMAGE)
 
 compress-release:
 	sudo pv $(IMAGE) | lbzip2 > $(IMAGE).bz2 && rm -f $(IMAGE)

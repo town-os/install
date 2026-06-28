@@ -50,6 +50,13 @@ cleanup_mount() {
 IMAGE_SIZE=${1:-12G}
 IMAGE=${2:-image.raw}
 
+# RPI builds a Raspberry Pi image (Pi 4/400/CM4/Pi 5/CM5) that boots NATIVELY via
+# the Pi GPU bootloader + config.txt — NO UEFI, NO GRUB. It only makes sense on
+# aarch64 (builds are always native), and it swaps the kernel, bootloader, and the
+# whole boot-staging path below. Empty = the normal UEFI/GRUB image (x86_64 +
+# qemu 'virt' aarch64).
+RPI="${RPI:-}"
+
 # Builds are always NATIVE: the image architecture equals the build host (or the
 # same-arch builder container) architecture. We never cross-build or emulate, so
 # `uname -m` is authoritative for which kernel package and GRUB target to use.
@@ -72,6 +79,32 @@ case "$ARCH" in
     exit 1
     ;;
 esac
+
+# Raspberry Pi overrides. The Pi's GPU bootloader reads only a FAT partition and
+# loads kernel/DTB/initramfs directly, so we use the Raspberry Pi Foundation
+# kernel (ALARM `linux-rpi`: 4 KB pages, ships /boot/kernel8.img + flat *.dtb +
+# overlays/, boots BOTH Pi 4 and Pi 5) plus `raspberrypi-bootloader` (the GPU
+# firmware: start4.elf/fixup4.dat used by Pi 4, ignored by the EEPROM-resident
+# Pi 5 firmware). GRUB is not installed at all on this path.
+RPI_FIRMWARE_PKG=""
+if [ -n "$RPI" ]; then
+  if [ "$ARCH" != "aarch64" ]; then
+    echo "RPI builds are aarch64-only (got $ARCH). Build on an aarch64 host." >&2
+    exit 1
+  fi
+  if [ "$STORAGE_BACKEND" = "zfs" ]; then
+    echo "RPI builds do not support the zfs storage backend." >&2
+    exit 1
+  fi
+  KERNEL_PKG="linux-rpi"     # RPi Foundation kernel: kernel8.img, Pi 4 + Pi 5
+  KERNEL_ZFS_PKG=""
+  RPI_FIRMWARE_PKG="raspberrypi-bootloader"
+  # Serial console name is per-board on the Pi and the firmware rewrites the
+  # `serial0` alias in cmdline.txt to the real device (ttyS0 on Pi 4, ttyAMA10 on
+  # Pi 5), so there is no single build-time SERIAL_TTY. See the cmdline.txt and
+  # serial-getty handling below, which cover all three candidates.
+  SERIAL_TTY="serial0"
+fi
 
 # Colors for output
 RED='\033[0;31m'
@@ -125,14 +158,20 @@ if [ "$ARCH" = "x86_64" ]; then
   parted -s "$DEVICE" set 1 bios_grub on
 fi
 
-# Part2: EFI System Partition
+# Part2: EFI System Partition (UEFI/GRUB builds) OR the Pi boot partition (RPI).
+# 64 MiB is plenty for a GRUB stub, but a native Pi boot partition must hold the
+# kernel, initramfs, all board DTBs, the overlays/ tree, and the GPU firmware, so
+# the Pi build grows it to 512 MiB. It stays a FAT32 partition flagged ESP either
+# way — recent Pi 4/5 EEPROMs find the first bootable FAT partition on a 512-byte
+# GPT disk (the unformatted 1 MiB part1 is skipped).
 print_info "Creating EFI System Partition..."
-parted -s "$DEVICE" mkpart ESP fat32 2MiB 66MiB
+if [ -n "$RPI" ]; then ESP_END_MIB=514; else ESP_END_MIB=66; fi
+parted -s "$DEVICE" mkpart ESP fat32 2MiB "${ESP_END_MIB}MiB"
 parted -s "$DEVICE" set 2 esp on
 
 # Part3: Data partition (holds /boot + root.sfs, >= 10GB)
 print_info "Creating data partition (>= 10GB)..."
-parted -s "$DEVICE" mkpart primary ext4 66MiB 100%
+parted -s "$DEVICE" mkpart primary ext4 "${ESP_END_MIB}MiB" 100%
 
 # Wait for kernel to update partition table
 partprobe "$DEVICE"
@@ -164,6 +203,12 @@ mount "$PART2" "$MOUNT_POINT/boot/efi"
 # cache so pacstrap doesn't re-download them every build). Strip comments/blanks.
 BASE_PACKAGES="$(grep -vE '^[[:space:]]*(#|$)' ./make/base-packages.txt | tr '\n' ' ')"
 PACKAGES="$BASE_PACKAGES $KERNEL_PKG"
+
+# Raspberry Pi GPU firmware (start*.elf/fixup*.dat/*.bin) staged onto the FAT boot
+# partition below so the GPU bootloader can bring up the SoC and load the kernel.
+if [ -n "$RPI_FIRMWARE_PKG" ]; then
+  PACKAGES="$PACKAGES $RPI_FIRMWARE_PKG"
+fi
 
 if [ "$STORAGE_BACKEND" = "zfs" ]
 then
@@ -240,10 +285,20 @@ if [ -n "$PACKAGE_DNS" ]; then
 else
   sed -i "/@PACKAGE_DNS@/d" $MOUNT_POINT/etc/systemd/system/town-os-systemcontroller.service
 fi
-# Keep the serial-getty's console gate IN TANDEM with the GRUB kernel `console=`
-# parameter: both derive from $SERIAL_TTY (ttyS0 on x86_64, ttyAMA0 on aarch64),
-# so the getty only starts on the exact serial device the kernel was told to use.
-sed -i "s|^ConditionKernelCommandLine=console=.*|ConditionKernelCommandLine=console=${SERIAL_TTY},115200|" \
+# Keep the serial-getty's console gate IN TANDEM with the kernel `console=`
+# parameter. On UEFI/GRUB builds both derive from $SERIAL_TTY (ttyS0 on x86_64,
+# ttyAMA0 on aarch64 'virt'), so the getty only starts on the exact serial device
+# the kernel was told to use. On the Pi the real serial device is per-board
+# (ttyS0 on Pi 4, ttyAMA10 on Pi 5 — the firmware rewrites cmdline.txt's `serial0`
+# alias to it), so we gate on the PER-INSTANCE console with the %I specifier and
+# enable all three candidate instances below; only the one matching the live
+# `console=` runs.
+if [ -n "$RPI" ]; then
+  SERIAL_GETTY_GATE='console=%I,115200'
+else
+  SERIAL_GETTY_GATE="console=${SERIAL_TTY},115200"
+fi
+sed -i "s|^ConditionKernelCommandLine=console=.*|ConditionKernelCommandLine=${SERIAL_GETTY_GATE}|" \
   $MOUNT_POINT/etc/systemd/system/town-os-serial-getty@.service
 
 # Architecture selection is handled entirely by the arch-suffixed image tags
@@ -280,30 +335,49 @@ podman exec town-build busctl call \
   org.freedesktop.systemd1.Manager SetDefaultTarget "sb" \
   "multi-user.target" false
 
+# Serial-getty instances to enable + mask. UEFI/GRUB builds have exactly one
+# serial device ($SERIAL_TTY). On the Pi the live serial device is per-board
+# (Pi 4 -> ttyS0, Pi 5 -> ttyAMA10, ttyAMA0 covering other cases) and the firmware
+# rewrites cmdline.txt's `serial0` to it, so we enable all three candidates; the
+# per-instance %I console gate set above means only the one matching the live
+# `console=` actually starts. Build the busctl argument arrays so the "asbb" count
+# stays correct as the serial instance list grows.
+if [ -n "$RPI" ]; then
+  SERIAL_TTYS="ttyS0 ttyAMA0 ttyAMA10"
+else
+  SERIAL_TTYS="$SERIAL_TTY"
+fi
+ENABLE_UNITS=(
+  "town-os-overlays.service"
+  "town-os-system--rolodex.service"
+  "town-os-rolodex-config.path"
+  "town-os-podman-api.service"
+  "town-os-systemcontroller.service"
+  "town-os-sledgehammer.service"
+  "town-os-network-diag.timer"
+  "systemd-networkd.service"
+  "systemd-networkd-wait-online.service"
+  "systemd-resolved.service"
+  "sshd.service"
+  "town-os-getty@tty1.service"
+)
+MASK_UNITS=( "getty@tty1.service" )
+for _t in $SERIAL_TTYS; do
+  ENABLE_UNITS+=( "town-os-serial-getty@${_t}.service" )
+  MASK_UNITS+=( "serial-getty@${_t}.service" )
+done
+
 podman exec town-build busctl call \
   org.freedesktop.systemd1 /org/freedesktop/systemd1 \
-  org.freedesktop.systemd1.Manager EnableUnitFiles "asbb" 13 \
-  "town-os-overlays.service" \
-  "town-os-system--rolodex.service" \
-  "town-os-rolodex-config.path" \
-  "town-os-podman-api.service" \
-  "town-os-systemcontroller.service" \
-  "town-os-sledgehammer.service" \
-  "town-os-network-diag.timer" \
-  "systemd-networkd.service" \
-  "systemd-networkd-wait-online.service" \
-  "systemd-resolved.service" \
-  "sshd.service" \
-  "town-os-getty@tty1.service" \
-  "town-os-serial-getty@${SERIAL_TTY}.service" \
+  org.freedesktop.systemd1.Manager EnableUnitFiles "asbb" "${#ENABLE_UNITS[@]}" \
+  "${ENABLE_UNITS[@]}" \
   false false
 
 # Mask default getty units so they don't conflict with ttyforce getty
 podman exec town-build busctl call \
   org.freedesktop.systemd1 /org/freedesktop/systemd1 \
-  org.freedesktop.systemd1.Manager MaskUnitFiles "asbb" 2 \
-  "getty@tty1.service" \
-  "serial-getty@${SERIAL_TTY}.service" \
+  org.freedesktop.systemd1.Manager MaskUnitFiles "asbb" "${#MASK_UNITS[@]}" \
+  "${MASK_UNITS[@]}" \
   false false
 
 if [ "$STORAGE_BACKEND" = "zfs" ]; then
@@ -320,10 +394,80 @@ print_info "systemd D-Bus configuration complete."
 # because arch-chroot bind-mounts /etc/resolv.conf
 ln -sf /run/systemd/resolve/stub-resolv.conf "$MOUNT_POINT/etc/resolv.conf"
 
+DATA_UUID=$(blkid -s UUID -o value "$PART3")
+
+if [ -n "$RPI" ]; then
+  # ---- Native Raspberry Pi boot (no UEFI, no GRUB) ----
+  # The Pi GPU bootloader reads ONLY this FAT partition (mounted at /boot/efi for
+  # the build). It chains: GPU firmware (start4.elf on Pi 4; EEPROM-resident on
+  # Pi 5) -> config.txt -> auto-selects the matching board DTB -> loads kernel8.img
+  # + the initramfs. linux-rpi + raspberrypi-bootloader already put kernel8.img,
+  # the flat *.dtb files, overlays/, and the firmware blobs into /boot, so we copy
+  # those onto the FAT partition and add config.txt/cmdline.txt ourselves.
+  print_info "Staging native Raspberry Pi boot files onto the FAT partition (no GRUB)..."
+  FAT="$MOUNT_POINT/boot/efi"
+  SRC="$MOUNT_POINT/boot"
+
+  # linux-rpi ships the kernel as kernel8.img (4 KB pages; boots Pi 4 AND Pi 5).
+  if [ ! -f "$SRC/kernel8.img" ]; then
+    echo "expected $SRC/kernel8.img from linux-rpi but it is missing" >&2
+    exit 1
+  fi
+  cp "$SRC/kernel8.img" "$FAT/kernel8.img"
+
+  # The town initramfs (mkinitcpio); reference it as initramfs-linux.img in
+  # config.txt regardless of the package preset's filename.
+  INITRD_SRC=$(ls "$SRC"/initramfs-*.img | grep -v fallback | head -1)
+  cp "$INITRD_SRC" "$FAT/initramfs-linux.img"
+
+  # All board DTBs (flat in /boot on ALARM) + the overlays tree. The firmware
+  # selects the correct DTB by detecting the board, so we ship them all.
+  cp "$SRC"/*.dtb "$FAT"/ 2>/dev/null || true
+  [ -d "$SRC/overlays" ] && cp -a "$SRC/overlays" "$FAT/overlays"
+  # GPU firmware from raspberrypi-bootloader (start*.elf/fixup*.dat/*.bin). Pi 5
+  # ignores these; Pi 4 requires start4.elf + fixup4.dat.
+  for f in "$SRC"/*.elf "$SRC"/*.dat "$SRC"/*.bin; do
+    [ -e "$f" ] && cp "$f" "$FAT"/
+  done
+
+  # config.txt — minimal and board-agnostic. arm_64bit + enable_uart are safe on
+  # all boards; dtparam=pciex1 enables the PCIe link so an NVMe root works on Pi 5
+  # (no-op on Pi 4). The [tryboot] section drives the Sledgehammer one-shot below.
+  cat > "$FAT/config.txt" <<CFG
+# Town OS — Raspberry Pi (Pi 4/400/CM4, Pi 5/CM5). Native GPU-bootloader boot.
+arm_64bit=1
+enable_uart=1
+initramfs initramfs-linux.img followkernel
+dtparam=pciex1
+
+[tryboot]
+cmdline=cmdline_sledge.txt
+CFG
+
+  # cmdline.txt — one line. console=serial0 is rewritten by the firmware to the
+  # board's real UART (ttyS0 on Pi 4, ttyAMA10 on Pi 5); tty1 is the HDMI console.
+  # root=UUID=<data> is exactly what the town-squashfs initrd hook expects.
+  CMDLINE="console=serial0,115200 console=tty1 root=UUID=$DATA_UUID rootfstype=ext4 rootwait rw"
+  printf '%s\n' "$CMDLINE" > "$FAT/cmdline.txt"
+  # Sledgehammer cmdline: identical plus the trigger param. Selected only by a
+  # one-shot `reboot "0 tryboot"`, which the firmware auto-reverts next boot — so
+  # town.sledgehammer reaches /proc/cmdline exactly as the GRUB entry did, and the
+  # sledgehammer.service / getty consumers are unchanged.
+  printf '%s town.sledgehammer\n' "$CMDLINE" > "$FAT/cmdline_sledge.txt"
+
+  # autoboot.txt: boot from partition 2 (our FAT ESP) explicitly, so the firmware
+  # never lingers on the unformatted 1 MiB part1.
+  cat > "$FAT/autoboot.txt" <<AUTOBOOT
+[all]
+boot_partition=2
+AUTOBOOT
+
+  print_info "Raspberry Pi boot files staged on partition 2 (FAT)."
+else
+
 print_info "Installing GRUB bootloader..."
 
 mkdir -p "$MOUNT_POINT/boot/grub"
-DATA_UUID=$(blkid -s UUID -o value "$PART3")
 
 # Detect kernel and initramfs filenames. The kernel image name is arch-specific:
 # x86_64 installs /boot/vmlinuz-<pkg>; Arch Linux ARM's linux-aarch64 installs the
@@ -408,6 +552,8 @@ if [ "$ARCH" = "x86_64" ]; then
       --recheck \
       "$DEVICE"
 fi
+
+fi  # end UEFI/GRUB vs native-Pi boot
 
 # --- Build squashfs image ---
 print_info "Building squashfs root image..."

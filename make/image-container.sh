@@ -71,11 +71,12 @@ sudo \
   UI_IMAGE="${UI_IMAGE:-}" LOCAL_DNS="${LOCAL_DNS:-}" \
   TTYFORCE_DEV="${TTYFORCE_DEV:-}" TTYFORCE_LATEST="${TTYFORCE_LATEST:-}" \
   IMAGE_HOSTNAME="${IMAGE_HOSTNAME:-}" SERIAL_CONSOLE="${SERIAL_CONSOLE:-}" \
+  RPI="${RPI:-}" \
   podman run --rm --privileged --cgroupns=host --network=host "${TTY_ARG[@]}" \
   -v /dev:/dev \
   -v "$REPO_ROOT":/build -w /build \
   -e CONTROLLER_IMAGE -e ROLODEX_IMAGE -e UI_IMAGE -e LOCAL_DNS \
-  -e TTYFORCE_DEV -e TTYFORCE_LATEST -e IMAGE_HOSTNAME -e SERIAL_CONSOLE \
+  -e TTYFORCE_DEV -e TTYFORCE_LATEST -e IMAGE_HOSTNAME -e SERIAL_CONSOLE -e RPI \
   town-os-builder /build/make/install.sh "$IMAGE_SIZE" "$IMAGE"
 
 # The image is created root-owned (consistent with today's sudo native build).
