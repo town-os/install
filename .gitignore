@@ -5,3 +5,6 @@
 /*.pid
 /*.img.*
 /.build-config
+# Repo-root install.sh is the website end-user installer (lives in ../website);
+# the build script is make/install.sh. Ignore stray copies dropped here.
+/install.sh
