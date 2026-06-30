@@ -7,6 +7,16 @@ build() {
     add_binary wpa_supplicant
     add_binary wpa_cli
     add_binary dhcpcd
+    # dhcpcd's resolvconf hook + runner, so dhcpcd writes /etc/resolv.conf (and
+    # the /run/dhcpcd/resolv.conf/<iface>.* fragments) from the DHCP lease itself.
+    # Without these, dhcpcd in the initrd never touches resolv.conf, and the
+    # statically seeded public DNS (8.8.8.8/1.1.1.1 — blocked on NAT/captive
+    # networks) is what curl sees when ttyforce fetches GitHub SSH keys. The
+    # runner is dhcpcd's compiled-in default --script, so its mere presence
+    # activates it (no flag change). Both files ship with the dhcpcd package
+    # (make/base-packages.txt) and exist in the pacstrapped rootfs at build time.
+    add_file /usr/lib/dhcpcd/dhcpcd-run-hooks
+    add_file /usr/lib/dhcpcd/dhcpcd-hooks/20-resolv.conf
     add_binary ip
     add_binary iw
     add_binary iwlist
