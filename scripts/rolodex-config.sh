@@ -1,73 +1,64 @@
 #!/bin/sh
-# Generate rolodex's runtime config, choosing DNS forwarders from DHCP.
+# Generate rolodex's runtime config.
 #
 # rolodex is the system resolver: systemd-resolved is pointed at 127.0.0.2
-# first, so rolodex always answers first and only *forwards* names it isn't
-# authoritative for. This script picks what it forwards TO:
+# first, so rolodex always answers first. For names it isn't authoritative for,
+# rolodex runs in `auto` mode — a resilient fallback chain:
 #
-#   - DHCP-provided DNS servers when the lease offers any (honors the local
-#     network's resolver: LAN/split-horizon names, captive portals).
-#   - then the default gateway, which in NAT/home-router setups runs a DNS
-#     forwarder — and on networks that filter outbound DNS to public resolvers
-#     is often the ONLY resolver that works.
-#   - then Cloudflare/Google as an always-on safety net.
+#   1. recurse from the ROOT SERVERS (preferred);
+#   2. if that fails (e.g. a network that filters outbound :53), DoH/DoT to
+#      public resolvers over :443/:853 (rolodex's built-in defaults —
+#      Cloudflare/Google — so this script doesn't set them);
+#   3. the LOCAL forwarder — the DHCP-provided resolver / default gateway, which
+#      this script computes below and writes to `forwarders`;
+#   4. public resolvers over plaintext :53 as a last resort (rolodex default).
 #
-# QEMU dev special-case: the libvirt default NAT hands the guest its own dnsmasq
-# (192.168.122.1) as the DHCP DNS. We drop the 192.168.122.0/24 entry from the
-# DHCP list (a lease pointing at the guest's own subnet), but it comes back via
-# the gateway path — and that is SAFE because qemu.sh pins that dnsmasq's
-# forwarders to the host's real upstream, so forwarding rolodex to 192.168.122.1
-# reaches the upstream directly and does NOT loop back through host resolved (the
-# loop the drop originally guarded against). On a DNS-filtering network this
-# gateway path is the only thing that makes guest DNS work, since the public
-# servers are blocked. In a real deployment Town OS is not behind libvirt's NAT,
-# so the gateway is just the LAN router there.
-#
-# This keeps "rolodex first, then DHCP DNS" without letting DHCP DNS outrank
-# rolodex: ttyforce sets `UseDNS=no` on its networkd units precisely so the
-# DHCP servers never get installed as higher-priority per-link resolvers (which
-# would bypass rolodex). networkd still records them in the lease file
-# regardless of UseDNS, so that file — not resolved — is our source.
+# rolodex switches tiers only after a grace period of failures and flushes its
+# cache on every switch (cross-tier poisoning guard) — all handled in rolodex.
+# We only supply the pieces that are host-specific: the `bind` list and the
+# local `forwarders`. The DHCP resolver is ALSO used, separately, as the
+# systemd-resolved BOOTSTRAP resolver (scripts/bootstrap-dns.sh) so the rolodex
+# image can be pulled before rolodex itself is up.
 set -eu
 
 CONF_DIR=/town-os/rolodex
 CONF="$CONF_DIR/rolodex.yml"
 mkdir -p "$CONF_DIR"
 
-# DHCP-offered DNS from every networkd lease, in order, deduped. Drop loopback
-# (forwarding to 127.0.0.x would loop back into rolodex itself) and the libvirt
-# default NAT subnet (192.168.122.0/24 — the QEMU dev special-case above).
+# Local forwarder(s) for the auto chain's tier 3: the DHCP-offered DNS from every
+# networkd lease, then the default gateway (a DNS forwarder in NAT/home setups;
+# on the QEMU dev VM this is libvirt's dnsmasq at 192.168.122.1, which forwards
+# through the host and works even where raw outbound :53 is filtered). Loopback
+# is dropped (forwarding to 127.0.0.x would loop back into rolodex). Deduped,
+# first occurrence wins.
 dhcp_dns="$(
   awk -F= '/^DNS=/ { print $2 }' /run/systemd/netif/leases/* 2>/dev/null \
-    | tr ' ' '\n' \
-    | grep -vE '^(127\.|::1$|192\.168\.122\.)' \
-    | awk 'NF && !seen[$0]++'
+    | tr ' ' '\n'
 )"
-
-forwarder_line() {
-  # IPv6 literals contain ':' and must be bracketed before the :53 port.
-  case "$1" in
-    *:*) printf '  - "[%s]:53"\n' "$1" ;;
-    *)   printf '  - "%s:53"\n' "$1" ;;
-  esac
-}
-
-# Default gateway — a DNS forwarder in NAT/home setups (libvirt's dnsmasq on the
-# dev VM; see header). Read from the routing table; empty if there's no route.
 gw="$(ip -4 route show default 2>/dev/null \
   | awk '{ for (i = 1; i < NF; i++) if ($i == "via") { print $(i + 1); exit } }')"
-
-# Forwarder priority: DHCP-offered DNS, then the gateway, then the public
-# servers as a safety net. Deduped, first occurrence wins; loopback dropped
-# (forwarding to 127.0.0.x / ::1 would loop back into rolodex itself).
 forwarder_ips="$(
-  {
-    printf '%s\n' "$dhcp_dns"
-    if [ -n "$gw" ]; then printf '%s\n' "$gw"; fi
-    printf '1.1.1.1\n8.8.8.8\n'
-  } | grep -vE '^(127\.|::1$)' | awk 'NF && !seen[$0]++'
+  { printf '%s\n' "$dhcp_dns"; [ -n "$gw" ] && printf '%s\n' "$gw"; } \
+    | grep -vE '^(127\.|::1$)' \
+    | awk 'NF && !seen[$0]++'
 )"
-forwarders="$(printf '%s\n' "$forwarder_ips" | while IFS= read -r ip; do forwarder_line "$ip"; done)"
+forwarders="$(
+  printf '%s\n' "$forwarder_ips" | while IFS= read -r ip; do
+    [ -n "$ip" ] || continue
+    case "$ip" in
+      *:*) printf '  - "[%s]:53"\n' "$ip" ;;
+      *)   printf '  - "%s:53"\n' "$ip" ;;
+    esac
+  done
+)"
+# A bare `forwarders:` is YAML null, not an empty list — emit `[]` when we found
+# none (rolodex still resolves via roots + the DoH/public tiers).
+if [ -n "$forwarders" ]; then
+  forwarders_block="forwarders:
+$forwarders"
+else
+  forwarders_block="forwarders: []"
+fi
 
 # Build the DNS bind list. We always bind loopback so systemd-resolved can reach
 # rolodex locally over BOTH protocols: 127.0.0.2 (resolved's first DNS= entry)
@@ -109,8 +100,9 @@ ${binds}grpc:
   tcp_bind: ""
   unix_socket: /data/rolodex.sock
   shared_secret: ""
-forwarders:
-$forwarders
+${forwarders_block}
+resolution:
+  mode: auto
 rbl:
   enabled: true
   providers: []

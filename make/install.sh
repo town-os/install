@@ -349,6 +349,7 @@ else
 fi
 ENABLE_UNITS=(
   "town-os-overlays.service"
+  "town-os-bootstrap-dns.service"
   "town-os-system--rolodex.service"
   "town-os-rolodex-config.path"
   "town-os-podman-api.service"

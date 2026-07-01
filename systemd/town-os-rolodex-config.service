@@ -1,6 +1,6 @@
 # vim: ft=systemd
 [Unit]
-Description=Refresh rolodex DNS forwarders from the current DHCP lease
+Description=Refresh DNS (bootstrap resolver + rolodex binds) from the current DHCP lease
 After=town-os-system--rolodex.service
 RequiresMountsFor=/town-os
 

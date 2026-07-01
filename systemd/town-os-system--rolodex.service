@@ -10,8 +10,8 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=exec
-# Generate rolodex.yml with DHCP-aware forwarders (DHCP DNS when the lease
-# offers any, else Cloudflare/Google). See the script for the full rationale.
+# Generate rolodex.yml (dynamic bind list; no forwarders — rolodex recurses from
+# the root servers). See the script for the full rationale.
 ExecStartPre=/bin/sh /usr/lib/town-os/scripts/rolodex-config.sh
 ExecStartPre=-/usr/bin/podman container cleanup town-os-system--rolodex
 ExecStartPre=-/usr/bin/podman stop -t 10 town-os-system--rolodex

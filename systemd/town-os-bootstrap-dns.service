@@ -1,0 +1,18 @@
+# vim: ft=systemd
+[Unit]
+Description=Town OS: seed systemd-resolved with the DHCP resolver for bootstrap
+# Needs a lease/gateway to exist, and resolved up to reload. Must be in place
+# BEFORE anything pulls a container image (rolodex is the first pull, and it is
+# what provides DNS once it's up), so order ahead of rolodex/systemcontroller.
+Requires=network-online.target
+After=network-online.target systemd-resolved.service
+Before=town-os-system--rolodex.service town-os-systemcontroller.service town-os-podman-api.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh /usr/lib/town-os/scripts/bootstrap-dns.sh
+
+[Install]
+WantedBy=multi-user.target
