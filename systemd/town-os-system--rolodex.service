@@ -22,6 +22,14 @@ ExecStart=/usr/bin/podman run --pull=always --replace --name town-os-system--rol
     quay.io/town/rolodex:rc.latest \
     /usr/local/bin/rolodex-dns --config /data/rolodex.yml
 ExecStop=/usr/bin/podman stop -t 10 town-os-system--rolodex
+# Once rolodex is actually listening, make it resolved's SOLE resolver
+# (DNS=127.0.0.2 ::1), dropping the bootstrap DHCP resolver so split-horizon
+# names can't leak to it. When rolodex stops (crash/restart/shutdown), revert
+# resolved to the bootstrap resolver so DNS (and the next --pull=always) still
+# works. Both hand off to bootstrap-dns.sh, which probes liveness and picks the
+# right list; ExecStopPost runs on failure/stop as well as clean exit.
+ExecStartPost=/bin/sh /usr/lib/town-os/scripts/rolodex-primary-dns.sh
+ExecStopPost=/bin/sh /usr/lib/town-os/scripts/bootstrap-dns.sh
 Restart=always
 RestartSec=5
 
