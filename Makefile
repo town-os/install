@@ -28,6 +28,10 @@ VM_DISK_SIZE ?= $(shell grep '^vm_disk_size:' town-os.yaml \
                   | awk '{ print $$2 }' | tr -d '"' | tr -d "'" \
                   || echo 50G)
 VM_MEMORY   ?= 4G
+# vCPUs for the dev VM. QEMU defaults to 1, which starves CPU-count-scaled worker
+# pools (e.g. rolodex's tokio runtime); give it several cores so it resolves like
+# real hardware. Override with VM_CPUS=N.
+VM_CPUS     ?= 4
 VM_BRIDGE   ?= virbr0
 VM_NAME     ?= town-os
 # Pin the VM to a specific IP via a libvirt DHCP reservation. Defaults to .50 on
@@ -113,7 +117,7 @@ help:
 rebuild-qemu: stop clean image qemu
 
 run: stop $(IMAGE)
-	VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_BRIDGE=$(VM_BRIDGE) \
+	VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_CPUS=$(VM_CPUS) VM_BRIDGE=$(VM_BRIDGE) \
 	  VM_NAME=$(VM_NAME) IMAGE=$(IMAGE) FOREGROUND=$(FOREGROUND) \
 	  ${PWD}/make/run.sh $(IMAGE)
 
@@ -194,12 +198,12 @@ qemu-release: qemu
 virtualbox-release: virtualbox
 
 qemu: $(IMAGE)
-	VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_BRIDGE=$(VM_BRIDGE) \
+	VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_CPUS=$(VM_CPUS) VM_BRIDGE=$(VM_BRIDGE) \
 	  VM_NAME=$(VM_NAME) VM_IP=$(VM_IP) VM_NET6_PREFIX=$(VM_NET6_PREFIX) VM_IP6=$(VM_IP6) IMAGE=$(IMAGE) \
 	  ${PWD}/make/qemu.sh $(IMAGE)
 
 qemu-fg: $(IMAGE)
-	FOREGROUND=1 VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_BRIDGE=$(VM_BRIDGE) \
+	FOREGROUND=1 VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_CPUS=$(VM_CPUS) VM_BRIDGE=$(VM_BRIDGE) \
 	  VM_NAME=$(VM_NAME) VM_IP=$(VM_IP) VM_NET6_PREFIX=$(VM_NET6_PREFIX) VM_IP6=$(VM_IP6) \
 	  ${PWD}/make/qemu.sh $(IMAGE)
 
@@ -210,7 +214,7 @@ qemu-fg: $(IMAGE)
 # real USB is never modified. The four data disks (disk0-3.img) are still used.
 qemu-usb:
 	@[ -n "$(USB_DEV)" ] || { echo 'error: set USB_DEV=/dev/sdX (the USB block device to boot)'; exit 1; }
-	FOREGROUND=1 USB_DEV=$(USB_DEV) VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_BRIDGE=$(VM_BRIDGE) \
+	FOREGROUND=1 USB_DEV=$(USB_DEV) VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_CPUS=$(VM_CPUS) VM_BRIDGE=$(VM_BRIDGE) \
 	  VM_NAME=$(VM_NAME) VM_IP=$(VM_IP) VM_NET6_PREFIX=$(VM_NET6_PREFIX) VM_IP6=$(VM_IP6) ${PWD}/make/qemu.sh $(USB_DEV)
 
 stop:

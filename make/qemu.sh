@@ -4,6 +4,12 @@ set -euo pipefail
 IMAGE="${1:?Usage: qemu.sh IMAGE}"
 VM_DISK_SIZE="${VM_DISK_SIZE:?VM_DISK_SIZE is required}"
 VM_MEMORY="${VM_MEMORY:?VM_MEMORY is required}"
+# vCPU count. QEMU defaults to a single vCPU, which starves services that size
+# their worker pools to the CPU count — notably rolodex, whose tokio runtime is
+# left unpinned so it scales to the machine (1 vCPU -> 1 worker -> cold recursive
+# lookups serialize and time out under load). Give the dev VM several cores so it
+# behaves like real multi-core hardware; override with VM_CPUS=N.
+VM_CPUS="${VM_CPUS:-4}"
 VM_BRIDGE="${VM_BRIDGE:?VM_BRIDGE is required}"
 FOREGROUND="${FOREGROUND:-0}"
 
@@ -461,6 +467,7 @@ QEMU_CMD=(
   "${MACHINE_ARGS[@]}"
   "${FIRMWARE_ARGS[@]}"
   -m "${VM_MEMORY}"
+  -smp "${VM_CPUS}"
   -netdev "bridge,id=net0,br=${VM_BRIDGE}"
   -device "virtio-net-pci,netdev=net0,mac=${MAC}"
   -device qemu-xhci
