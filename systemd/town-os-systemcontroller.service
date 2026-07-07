@@ -14,7 +14,16 @@ Type=exec
 ExecStartPre=/bin/ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
 ExecStartPre=/usr/bin/mkdir -p /town-os/data/db /town-os/data/repos /var/lib/containers /run/town-os
 ExecStartPre=-/usr/bin/podman rm -f systemcontroller
-ExecStart=/usr/bin/podman run --pull=always \
+# --pull=missing, NOT --pull=always: on a crash/restart (e.g. the systemd
+# watchdog killing us after a suspend/resume freeze) --pull=always blocks the
+# restart on re-pulling our own image from quay.io; if the host network isn't
+# back yet the pull fails and the controller can't restart, so the box loses
+# management until the internet returns. --pull=missing restarts from the local
+# image with no network dependency. Updates are still applied deliberately: the
+# UI's POST /system-services/refresh explicitly `podman pull`s the controller
+# image (it's in collectSystemServices) before scheduling the self-restart, so
+# the freshly-pulled image is already local when --pull=missing runs it.
+ExecStart=/usr/bin/podman run --pull=missing \
     --name systemcontroller \
     --privileged \
     --security-opt label=disable \
