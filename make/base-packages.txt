@@ -21,6 +21,7 @@ wpa_supplicant
 iw
 wireless_tools
 iproute2
+wireguard-tools
 curl
 inetutils
 iputils
