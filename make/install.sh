@@ -280,6 +280,13 @@ export PACKAGE_DNS
 rsync -a ./systemd/ $MOUNT_POINT/etc/systemd/system/
 sed -i "s|quay.io/town/town:rc.latest|${CONTROLLER_IMAGE}|g" $MOUNT_POINT/etc/systemd/system/town-os-systemcontroller.service
 sed -i "s|quay.io/town/rolodex:rc.latest|${ROLODEX_IMAGE}|g" $MOUNT_POINT/etc/systemd/system/town-os-system--rolodex.service
+# Pass the controller's image tag into the container as TOWN_OS_TAG so the
+# systemcontroller derives every sibling image (UI, rolodex, networkcontroller,
+# ingress) at the SAME tag it was installed with. With no override this is
+# rc.latest-${ARCH}, so a system update always pulls the newest images; a
+# specific CONTROLLER_TAG/CONTROLLER_IMAGE pins the whole fleet to that tag.
+CONTROLLER_TAG_ONLY="${CONTROLLER_IMAGE##*:}"
+sed -i "s|@TOWN_OS_TAG@|${CONTROLLER_TAG_ONLY}|g" $MOUNT_POINT/etc/systemd/system/town-os-systemcontroller.service
 if [ -n "$PACKAGE_DNS" ]; then
   sed -i "s|@PACKAGE_DNS@|-package-dns ${PACKAGE_DNS}|g" $MOUNT_POINT/etc/systemd/system/town-os-systemcontroller.service
 else

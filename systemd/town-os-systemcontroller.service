@@ -40,6 +40,7 @@ ExecStart=/usr/bin/podman run --pull=missing \
     -v /town-os:/town-os:shared \
     -v /var/log:/var/log \
     -v /run/town-os:/run/town-os \
+    -e TOWN_OS_TAG=@TOWN_OS_TAG@ \
     quay.io/town/town:rc.latest \
     /systemcontroller \
     -repo-dir /town-os/data/repos \
