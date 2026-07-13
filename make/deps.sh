@@ -9,7 +9,7 @@ case "${ID:-}" in
   arch|manjaro|endeavouros|garuda)
     sudo pacman -S --needed base-devel arch-install-scripts parted e2fsprogs \
       dosfstools rsync psmisc lsof squashfs-tools libvirt dnsmasq qemu-full \
-      socat lbzip2 pv podman dbus avahi
+      socat lbzip2 pv podman dbus
     ;;
   ubuntu|debian|pop|linuxmint)
     sudo apt-get update
@@ -17,7 +17,7 @@ case "${ID:-}" in
       build-essential parted e2fsprogs dosfstools rsync psmisc lsof \
       squashfs-tools libvirt-daemon-system libvirt-clients dnsmasq-base \
       qemu-system-x86 qemu-utils socat lbzip2 pv podman \
-      dbus util-linux avahi-daemon avahi-utils
+      dbus util-linux
     ;;
   fedora*|rhel|centos|rocky|almalinux)
     # Image building still requires Arch-specific tools (pacstrap, mkinitcpio,
@@ -27,8 +27,7 @@ case "${ID:-}" in
     sudo dnf install -y \
       gcc make parted e2fsprogs dosfstools rsync psmisc lsof \
       squashfs-tools libvirt libvirt-client dnsmasq \
-      qemu-system-x86 qemu-img socat lbzip2 pv podman util-linux \
-      avahi avahi-tools
+      qemu-system-x86 qemu-img socat lbzip2 pv podman util-linux
     ;;
   *)
     echo "Unsupported distro: ${ID:-unknown}" >&2
@@ -51,7 +50,7 @@ sudo virsh net-start default 2>/dev/null || true
 sudo virsh net-autostart default
 
 # Enable mDNS in systemd-resolved for .local resolution across the VM bridge.
-# This replaces avahi-daemon — systemd-resolved handles mDNS natively.
+# systemd-resolved handles mDNS natively — no avahi-daemon needed.
 sudo mkdir -p /etc/systemd/resolved.conf.d
 printf '[Resolve]\nMulticastDNS=yes\n' | sudo tee /etc/systemd/resolved.conf.d/mdns.conf >/dev/null
 
@@ -79,22 +78,5 @@ if command -v firewall-cmd >/dev/null 2>&1 && sudo firewall-cmd --state >/dev/nu
   # networking for running podman containers — restore them.
   sudo podman network reload --all >/dev/null 2>&1 || true
 fi
-
-# avahi publishes the LAN-side mDNS alias for `make lan-proxy`. It MUST be
-# scoped OFF the VM bridge: the guest owns its name on the bridge, and a host
-# responder probing the same name there would trigger mDNS conflict resolution
-# and force the guest to rename itself (town-os -> town-os-2). resolved keeps
-# handling mDNS on the bridge; avahi handles the LAN side.
-if [ -f /etc/avahi/avahi-daemon.conf ]; then
-  if grep -q '^[#[:space:]]*deny-interfaces=' /etc/avahi/avahi-daemon.conf; then
-    sudo sed -i "s/^[#[:space:]]*deny-interfaces=.*/deny-interfaces=${VM_BRIDGE}/" /etc/avahi/avahi-daemon.conf
-  else
-    sudo sed -i "/^\[server\]/a deny-interfaces=${VM_BRIDGE}" /etc/avahi/avahi-daemon.conf
-  fi
-fi
-sudo busctl call org.freedesktop.systemd1 /org/freedesktop/systemd1 \
-  org.freedesktop.systemd1.Manager EnableUnitFiles "asbb" 1 "avahi-daemon.service" false false
-sudo busctl call org.freedesktop.systemd1 /org/freedesktop/systemd1 \
-  org.freedesktop.systemd1.Manager RestartUnit "ss" "avahi-daemon.service" "replace"
 
 sudo systemctl reload systemd-resolved 2>/dev/null || true

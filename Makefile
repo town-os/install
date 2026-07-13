@@ -46,10 +46,27 @@ VM_IP       ?= 192.168.122.50
 # from its MAC. Set empty to disable. VM_IP6 overrides the printed guest address.
 VM_NET6_PREFIX ?= fd00:c0a8:7a
 VM_IP6      ?=
+
+# Expose the NAT'd VM to the LAN so other devices on the wireless network (a
+# phone running the Town OS client) can reach it: socat relays the control API
+# (5309), the UI (80/443) and ssh (2222) from the host's LAN address to the
+# guest, and a DNAT range rule forwards the WireGuard UDP ports (51820-55915) so
+# every custom network works. See make/vm-relay.sh. On by default; turn it off
+# with VM_LAN=0.
+VM_LAN ?= 1
 FOREGROUND  ?=
 LOCAL_DNS   ?=
 # Physical USB block device to boot with `make qemu-usb` (e.g. /dev/sda).
 USB_DEV     ?=
+# Pass a physical phone through to the guest over USB. This is passthrough of a
+# LIVE device, not a disk to boot from (that's USB_DEV above).
+#   make qemu USB_PHONE=auto          # find the attached Android device
+#   make qemu USB_PHONE=18d1:4ee1     # by vendor:product
+#   make qemu USB_PHONE=1.1           # by physical bus.port
+# The phone leaves the host while the VM holds it (adb on the host stops seeing
+# it). Enable USB tethering on the phone and the box gets a direct network link
+# to it -- no libvirt NAT in the path.
+USB_PHONE   ?=
 # When non-empty, the built image's GRUB defaults to the serial-console entry
 # (console=ttyS0,115200) so the machine boots headless with no keyboard/monitor.
 SERIAL_CONSOLE ?=
@@ -61,7 +78,7 @@ RPI ?=
 
 .PHONY: help run run-release stop image image-release build-installer push-installer qemu qemu-fg qemu-usb \
         qemu-release virtualbox virtualbox-fg virtualbox-release \
-        stop-qemu stop-virtualbox vm-ip serial lan-proxy clean clean-images \
+        stop-qemu stop-virtualbox vm-ip serial clean clean-images \
         cleanup-loopback deps deps-debian release flash rebuild-qemu image-container
 
 help:
@@ -83,7 +100,6 @@ help:
 	@echo '  rebuild-qemu     stop + clean + image + qemu'
 	@echo '  serial           Attach to a running QEMU serial console (Ctrl-] to detach)'
 	@echo '  vm-ip            Print the IP address of the running VM'
-	@echo '  lan-proxy        Expose the running VM to the LAN as <hostname>.local (mDNS alias + port relays)'
 	@echo
 	@echo 'Run (VirtualBox):'
 	@echo '  virtualbox       Build if stale, launch a VirtualBox VM in the background'
@@ -199,12 +215,14 @@ virtualbox-release: virtualbox
 
 qemu: $(IMAGE)
 	VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_CPUS=$(VM_CPUS) VM_BRIDGE=$(VM_BRIDGE) \
-	  VM_NAME=$(VM_NAME) VM_IP=$(VM_IP) VM_NET6_PREFIX=$(VM_NET6_PREFIX) VM_IP6=$(VM_IP6) IMAGE=$(IMAGE) \
+	  VM_NAME=$(VM_NAME) VM_IP=$(VM_IP) USB_PHONE=$(USB_PHONE) VM_NET6_PREFIX=$(VM_NET6_PREFIX) VM_IP6=$(VM_IP6) IMAGE=$(IMAGE) \
+	  VM_LAN=$(VM_LAN) \
 	  ${PWD}/make/qemu.sh $(IMAGE)
 
 qemu-fg: $(IMAGE)
 	FOREGROUND=1 VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_CPUS=$(VM_CPUS) VM_BRIDGE=$(VM_BRIDGE) \
-	  VM_NAME=$(VM_NAME) VM_IP=$(VM_IP) VM_NET6_PREFIX=$(VM_NET6_PREFIX) VM_IP6=$(VM_IP6) \
+	  VM_NAME=$(VM_NAME) VM_IP=$(VM_IP) USB_PHONE=$(USB_PHONE) VM_NET6_PREFIX=$(VM_NET6_PREFIX) VM_IP6=$(VM_IP6) \
+	  VM_LAN=$(VM_LAN) \
 	  ${PWD}/make/qemu.sh $(IMAGE)
 
 # Boot QEMU (foreground) from a PHYSICAL USB device instead of the built image.
@@ -215,7 +233,7 @@ qemu-fg: $(IMAGE)
 qemu-usb:
 	@[ -n "$(USB_DEV)" ] || { echo 'error: set USB_DEV=/dev/sdX (the USB block device to boot)'; exit 1; }
 	FOREGROUND=1 USB_DEV=$(USB_DEV) VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_CPUS=$(VM_CPUS) VM_BRIDGE=$(VM_BRIDGE) \
-	  VM_NAME=$(VM_NAME) VM_IP=$(VM_IP) VM_NET6_PREFIX=$(VM_NET6_PREFIX) VM_IP6=$(VM_IP6) ${PWD}/make/qemu.sh $(USB_DEV)
+	  VM_NAME=$(VM_NAME) VM_IP=$(VM_IP) USB_PHONE=$(USB_PHONE) VM_NET6_PREFIX=$(VM_NET6_PREFIX) VM_IP6=$(VM_IP6) ${PWD}/make/qemu.sh $(USB_DEV)
 
 stop:
 	IMAGE=$(IMAGE) VM_NAME=$(VM_NAME) ${PWD}/make/stop.sh
@@ -239,13 +257,6 @@ vm-ip:
 
 serial:
 	${PWD}/make/serial.sh
-
-# Expose the running NAT'd VM to the LAN: avahi alias <IMAGE_HOSTNAME>.local ->
-# host IP + socat TCP relays to the guest. Foreground; Ctrl-C stops and cleans
-# up. Must NOT depend on $(IMAGE) — it must never trigger a build.
-lan-proxy:
-	VM_NAME=$(VM_NAME) IMAGE=$(IMAGE) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) \
-	  ${PWD}/make/lan-proxy.sh
 
 clean: stop
 	IMAGE=$(IMAGE) VM_NAME=$(VM_NAME) ${PWD}/make/clean.sh

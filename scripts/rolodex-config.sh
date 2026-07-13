@@ -92,6 +92,35 @@ if [ -n "$primary_if" ]; then
   done
 fi
 
+# resolution.mode is OWNED BY THE CONTROLLER, not by this script. Both write this
+# file: we are the authority on the host-specific pieces (the bind list and the
+# local forwarders, which only we can enumerate), and the controller is the
+# authority on the operator's chosen mode (it lives in the settings DB and is
+# applied via RewriteConfig + a rolodex restart).
+#
+# We run as rolodex's ExecStartPre, i.e. on EVERY start — including the restart
+# the controller triggers to apply a mode change. Hardcoding `mode: auto` here
+# therefore clobbered the operator's choice on the very restart meant to apply
+# it: the setting appeared to save, then silently reverted. So preserve whatever
+# mode is already in the file and only fall back to `auto` on a fresh box (no
+# config yet) or an unrecognized value.
+#
+# `auto` is the right default: rolodex tries the roots first and falls back
+# through DoH/DoT, the local forwarder, and public :53. Bare `recursive` has no
+# fallback and every external name SERVFAILs on a network that filters outbound
+# :53 (see the header comment).
+mode=auto
+if [ -f "$CONF" ]; then
+  existing="$(awk '
+    /^resolution:/            { in_res = 1; next }
+    in_res && /^[[:space:]]+mode:[[:space:]]*/ { print $2; exit }
+    in_res && /^[^[:space:]]/ { exit }
+  ' "$CONF" | tr -d '"'"'"'"')"
+  case "$existing" in
+    auto|recursive|forward) mode="$existing" ;;
+  esac
+fi
+
 cat > "$CONF" <<EOF
 database_path: /data/rolodex.db
 dns:
@@ -102,7 +131,7 @@ ${binds}grpc:
   shared_secret: ""
 ${forwarders_block}
 resolution:
-  mode: auto
+  mode: ${mode}
 rbl:
   enabled: true
   providers: []

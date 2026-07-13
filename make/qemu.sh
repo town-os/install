@@ -13,6 +13,11 @@ VM_CPUS="${VM_CPUS:-4}"
 VM_BRIDGE="${VM_BRIDGE:?VM_BRIDGE is required}"
 FOREGROUND="${FOREGROUND:-0}"
 
+# Expose the NAT'd guest to the LAN (see make/vm-relay.sh) so other devices on
+# the wireless network — a phone running the Town OS client — can reach it.
+# On by default; set VM_LAN=0 to turn it off.
+VM_LAN="${VM_LAN:-1}"
+
 # Boot source. By default QEMU boots the built image file ($IMAGE). Set USB_DEV
 # to a physical USB block device (e.g. /dev/sda) to boot that instead — used by
 # the `qemu-usb` target to test an actual flashed USB stick in a VM. A device
@@ -410,8 +415,8 @@ fi
 # DUID) on every boot — its root is read-only squashfs, so the DUID isn't
 # persisted — and dnsmasq keys leases on the client-id ahead of the MAC. Without
 # a reservation the VM therefore gets a NEW address every boot (.9 -> .10 -> ..),
-# which silently breaks `make vm-ip`, `make lan-proxy` (it bakes the guest IP in
-# at startup), and the guest's mDNS record. A MAC reservation forces a fixed IP
+# which silently breaks `make vm-ip` and the guest's mDNS record, and moves the
+# target of any host->guest port relay. A MAC reservation forces a fixed IP
 # regardless of the churning client-id. Only meaningful for the libvirt 'default'
 # NAT network; skip custom bridges (we don't run dnsmasq for those). Best-effort
 # — never block the VM launch on it. (Takes effect on the guest's next DHCP, i.e.
@@ -460,6 +465,108 @@ if [ "${#GFX_ARGS[@]}" -gt 0 ] || [ -n "${USB_DEV}" ]; then
   USBDISK_DRIVE="${USBDISK_DRIVE},snapshot=on"
 fi
 
+# Pass a physical phone through to the guest (USB_PHONE).
+#
+# This is USB *passthrough* of a live device — unrelated to USB_DEV above, which
+# is a block device the VM BOOTS from. The guest sees the phone as if it were
+# plugged into it, which is what makes USB tethering work: enable tethering on
+# the phone and the box gets a network interface with the phone on the other end,
+# giving the two direct IP reachability without touching libvirt's NAT.
+#
+# USB_PHONE accepts:
+#   auto        - find the single attached Android device (see the vendor list)
+#   vid:pid     - e.g. 18d1:4ee1
+#   bus.port    - e.g. 1.1 (already a physical port, used as-is)
+#
+# We resolve everything to **hostbus/hostport**, never vendorid/productid, and
+# that choice is load-bearing: a phone's product ID CHANGES when its USB mode
+# changes. A Pixel is 18d1:4ee1 in MTP mode and a different product ID once USB
+# debugging is on. Pinning vid:pid would therefore drop the device out of the
+# guest the moment you enable adb — exactly when you need it. The physical port
+# does not move, so hostport survives mode switches and re-plugs.
+USB_PHONE="${USB_PHONE:-}"
+USB_PHONE_ARGS=()
+
+if [ -n "${USB_PHONE}" ]; then
+  phone_syspath=""
+
+  case "${USB_PHONE}" in
+    auto)
+      # Known Android vendor IDs: Google, Samsung, OnePlus, Xiaomi, Motorola,
+      # Sony, LG, HTC, Huawei, Fairphone(=Google), Nothing(=Qualcomm bootloader).
+      for dev in /sys/bus/usb/devices/*/; do
+        vid="$(cat "${dev}/idVendor" 2>/dev/null || true)"
+        case "${vid}" in
+          18d1|04e8|2a70|2717|22b8|0fce|1004|0bb4|12d1|05c6)
+            if [ -n "${phone_syspath}" ]; then
+              echo "error: more than one Android device attached; set USB_PHONE=vid:pid or bus.port" >&2
+              exit 1
+            fi
+            phone_syspath="${dev}"
+            ;;
+        esac
+      done
+      if [ -z "${phone_syspath}" ]; then
+        echo "error: USB_PHONE=auto found no Android device. Is it plugged in and enumerated?" >&2
+        echo "       Check with: lsusb" >&2
+        exit 1
+      fi
+      ;;
+    *:*)
+      want_vid="${USB_PHONE%%:*}"
+      want_pid="${USB_PHONE##*:}"
+      for dev in /sys/bus/usb/devices/*/; do
+        vid="$(cat "${dev}/idVendor" 2>/dev/null || true)"
+        pid="$(cat "${dev}/idProduct" 2>/dev/null || true)"
+        if [ "${vid}" = "${want_vid}" ] && [ "${pid}" = "${want_pid}" ]; then
+          phone_syspath="${dev}"
+          break
+        fi
+      done
+      if [ -z "${phone_syspath}" ]; then
+        echo "error: no USB device matching ${USB_PHONE}. Check: lsusb" >&2
+        exit 1
+      fi
+      ;;
+    *.*)
+      # Already a bus.port — use it verbatim.
+      USB_PHONE_ARGS=(-device "usb-host,hostbus=${USB_PHONE%%.*},hostport=${USB_PHONE##*.}")
+      ;;
+    *)
+      echo "error: USB_PHONE must be 'auto', 'vid:pid', or 'bus.port' (got '${USB_PHONE}')" >&2
+      exit 1
+      ;;
+  esac
+
+  if [ -n "${phone_syspath}" ]; then
+    phone_bus="$(cat "${phone_syspath}/busnum")"
+    phone_dev="$(cat "${phone_syspath}/devnum")"
+    # devpath is the physical port chain ("1", or "2.3" behind a hub) — exactly
+    # what QEMU's hostport wants.
+    phone_port="$(cat "${phone_syspath}/devpath")"
+    phone_name="$(cat "${phone_syspath}/product" 2>/dev/null || echo 'USB device')"
+
+    echo "Passing through ${phone_name} (bus ${phone_bus}, port ${phone_port}) to the guest."
+    USB_PHONE_ARGS=(-device "usb-host,hostbus=${phone_bus},hostport=${phone_port}")
+
+    # The graphical path runs QEMU as the invoking user (see the privilege model
+    # below), and /dev/bus/usb nodes are root-owned. QEMU must open the device
+    # read-WRITE to drive it, so grant an ACL for this run — same approach as the
+    # USB_DEV block below, rather than adding the user to a group permanently.
+    usb_node="/dev/bus/usb/$(printf '%03d' "${phone_bus}")/$(printf '%03d' "${phone_dev}")"
+    if [ "${#GFX_ARGS[@]}" -gt 0 ] && [ ! -w "${usb_node}" ]; then
+      echo "Granting $(id -un) access to ${usb_node} for this run..."
+      sudo setfacl -m "u:$(id -un):rw" "${usb_node}" 2>/dev/null \
+        || sudo chmod o+rw "${usb_node}"
+    fi
+
+    # Passthrough DETACHES the phone from the host: adb, MTP and everything else
+    # on this machine stop seeing it until the VM releases it. Say so, because
+    # otherwise it looks like the cable failed again.
+    echo "Note: the host loses the phone while the VM holds it (adb included)."
+  fi
+fi
+
 # Assemble the full QEMU command line as an array.
 QEMU_CMD=(
   "${QEMU_BIN}"
@@ -482,6 +589,7 @@ QEMU_CMD=(
   -device ide-hd,drive=d2,bus=ahci0.2
   -drive file=disk3.img,if=none,id=d3,format=raw
   -device ide-hd,drive=d3,bus=ahci0.3
+  "${USB_PHONE_ARGS[@]}"
   "${GFX_ARGS[@]}"
   "${SERIAL_ARGS[@]}"
   "${DAEMON_ARGS[@]}"
@@ -513,6 +621,30 @@ fi
 #    read-only via snapshot=on, and for a USB device boot the user was granted
 #    read access just above (so QEMU-as-user can still read the raw device).
 #  - Headless x86 (-nographic, KVM + bridge): keep sudo/root (no display to map).
+# Start the LAN relay before QEMU so it is already listening when the guest
+# finishes booting. socat happily listens against a guest that isn't up yet —
+# connections just fail until it is. It is detached with setsid so it survives
+# this script exiting in the background (-daemonize) case; stop-qemu.sh reaps it
+# via vm-relay.pid. In the foreground case the trap below tears it down with the
+# VM, and vm-relay.sh's own trap removes its socats and firewall openings.
+RELAY_PID=""
+if [ "${VM_LAN}" != "0" ]; then
+  if [ -z "${RESERVED_IP:-}" ]; then
+    echo "warning: no reserved guest IP (custom bridge?); skipping LAN access" >&2
+  else
+    GUEST_IP="${RESERVED_IP}" VM_BRIDGE="${VM_BRIDGE}" \
+      setsid "$(dirname "$0")/vm-relay.sh" &
+    RELAY_PID=$!
+    echo "${RELAY_PID}" > vm-relay.pid
+    # Only tear it down here when this script owns the VM's lifetime. In the
+    # background case qemu.sh exits while the VM keeps running, so the relay must
+    # outlive it — stop-qemu.sh kills it instead.
+    if [ "${FOREGROUND}" = "1" ]; then
+      trap 'kill "${RELAY_PID}" 2>/dev/null || true; rm -f vm-relay.pid' EXIT
+    fi
+  fi
+fi
+
 if [ "${#GFX_ARGS[@]}" -gt 0 ]; then
   "${QEMU_CMD[@]}"
 else
