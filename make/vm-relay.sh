@@ -32,11 +32,14 @@ set -euo pipefail
 # flushes libvirt's and netavark's runtime rules, breaking the VM's and podman's
 # networking. Never reload firewalld here.
 #
-# THE CLIENT'S ENDPOINT OVERRIDE IS NOT OPTIONAL. The box writes `Endpoint` into
-# the peer config from its own view of the world: its public IP (fetched from
-# ipinfo.io), falling back to its LAN IP — inside QEMU, 192.168.122.50. Neither is
-# reachable from the phone. Point the client's endpoint override at the host
-# address printed below; the port is whatever the box shows for the network.
+# The peer's Endpoint needs no manual override: the box derives it from the
+# address the enrolling client DIALED — the Host header of its /networks/peers/add
+# request (peerEndpointHost, town-os/src/svc/systemcontroller). A phone enrolling
+# through this relay reaches the API at ${HOST_IP}:5309, so ${HOST_IP} is the
+# endpoint it is handed, and the DNAT below forwards the WireGuard range on that
+# same address. (It used to derive Endpoint from the box's own view — its public
+# IP, falling back to 192.168.122.50 inside QEMU — and neither is reachable from
+# the phone, so every handshake vanished and the tunnel looked simply dead.)
 #
 # All state is runtime-only — socat processes, firewall openings and DNAT rules —
 # and is torn down on exit.
@@ -165,8 +168,8 @@ if [ -n "${NOFW_PORTS:-}" ]; then
 fi
 
 echo
-echo "  Town OS client: box address        http://${HOST_IP}:5309"
-echo "                  endpoint override  ${HOST_IP}:<network's listen port>"
+echo "  Town OS client: box address  http://${HOST_IP}:5309"
+echo "                  (the box hands out ${HOST_IP} as the peer Endpoint — no override needed)"
 echo
 
 wait
