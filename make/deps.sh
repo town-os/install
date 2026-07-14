@@ -73,6 +73,36 @@ sudo resolvectl mdns "${VM_BRIDGE}" yes 2>/dev/null || true
 # reaches resolved. Allow it permanently.
 if command -v firewall-cmd >/dev/null 2>&1 && sudo firewall-cmd --state >/dev/null 2>&1; then
   sudo firewall-cmd --permanent --zone=libvirt --add-service=mdns >/dev/null 2>&1 || true
+
+  # The policy that lets LAN->guest WireGuard forwarding past firewalld's reject,
+  # so a phone on the wireless network can reach the VM's WireGuard (make/vm-relay.sh
+  # DNATs the port range; without this the DNAT'd packet is rejected on the way in
+  # and the tunnel silently never handshakes).
+  #
+  # It has to be a POLICY: --direct rules land in the legacy ip filter table, and
+  # nftables evaluates each table's chains independently, so an accept there
+  # cannot override firewalld's reject in `inet firewalld`; and nft cannot write
+  # into firewalld's table directly (it is owner-flagged, EPERM). Set up here, at
+  # deps time, because creating it costs a --reload -- doing it during a VM launch
+  # would flush libvirt/netavark rules underneath a running VM.
+  #
+  # Delete-then-create so a half-configured policy from an earlier run cannot
+  # linger. Inert with no VM running: nothing answers on the guest address.
+  LAN_IF=$(ip -4 route get 1.1.1.1 2>/dev/null \
+    | awk '{ for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit } }')
+  LAN_ZONE=$(sudo firewall-cmd --get-zone-of-interface="${LAN_IF}" 2>/dev/null \
+    || sudo firewall-cmd --get-default-zone 2>/dev/null)
+  if [ -n "${LAN_ZONE}" ]; then
+    sudo firewall-cmd --permanent --delete-policy=townos-vm >/dev/null 2>&1 || true
+    sudo firewall-cmd --permanent --new-policy=townos-vm >/dev/null 2>&1 || true
+    sudo firewall-cmd --permanent --policy=townos-vm --add-ingress-zone="${LAN_ZONE}" >/dev/null 2>&1 || true
+    sudo firewall-cmd --permanent --policy=townos-vm --add-egress-zone=libvirt >/dev/null 2>&1 || true
+    sudo firewall-cmd --permanent --policy=townos-vm --set-target=CONTINUE >/dev/null 2>&1 || true
+    sudo firewall-cmd --permanent --policy=townos-vm \
+      --add-rich-rule='rule family="ipv4" destination address="192.168.122.0/24" port port="51820-55915" protocol="udp" accept' \
+      >/dev/null 2>&1 || true
+  fi
+
   sudo firewall-cmd --reload >/dev/null 2>&1 || true
   # firewall-cmd --reload flushes netavark's NAT/DNS rules, silently breaking
   # networking for running podman containers — restore them.
