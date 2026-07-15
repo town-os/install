@@ -275,6 +275,17 @@ if command -v virsh >/dev/null 2>&1 \
   fi
 fi
 
+# Ensure qemu-bridge-helper is allowed to attach the guest to this bridge.
+# The setuid helper refuses any bridge not listed in /etc/qemu/bridge.conf
+# ("access denied by acl file"), so the VM would launch with no network — or
+# not launch at all. deps.sh writes this permanently; re-assert at runtime in
+# case deps hasn't been re-run. Idempotent (only appends the rule when absent).
+if ! sudo grep -qxF "allow ${VM_BRIDGE}" /etc/qemu/bridge.conf 2>/dev/null; then
+  sudo mkdir -p /etc/qemu
+  echo "allow ${VM_BRIDGE}" | sudo tee -a /etc/qemu/bridge.conf >/dev/null
+  echo "Allowed ${VM_BRIDGE} in /etc/qemu/bridge.conf for qemu-bridge-helper"
+fi
+
 # Re-assert mDNS on the bridge: resolvectl's per-link setting is runtime-only
 # and is lost whenever the bridge is recreated (e.g. every reboot), breaking
 # guest .local resolution (vm-ip.sh). Idempotent, so do it every launch.
