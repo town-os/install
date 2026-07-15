@@ -362,7 +362,7 @@ ENABLE_UNITS=(
   "town-os-podman-api.service"
   "town-os-systemcontroller.service"
   "town-os-sledgehammer.service"
-  "town-os-network-diag.timer"
+  "town-os-network-diag.service"
   "systemd-networkd.service"
   "systemd-networkd-wait-online.service"
   "systemd-resolved.service"
