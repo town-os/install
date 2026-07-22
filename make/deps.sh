@@ -7,27 +7,35 @@ fi
 
 case "${ID:-}" in
   arch|manjaro|endeavouros|garuda)
+    # qemu-full already bundles qemu-system-aarch64, which `make image-aarch64`
+    # uses to build an aarch64 image on an x86_64 host via full-system emulation
+    # (no binfmt). The 9p share it uses is built into qemu, so nothing extra is
+    # needed here beyond qemu-full.
     sudo pacman -S --needed base-devel arch-install-scripts parted e2fsprogs \
       dosfstools rsync psmisc lsof squashfs-tools libvirt dnsmasq qemu-full \
-      socat lbzip2 pv podman dbus
+      socat lbzip2 pv podman dbus curl cpio
     ;;
   ubuntu|debian|pop|linuxmint)
     sudo apt-get update
+    # qemu-system-arm supplies qemu-system-aarch64 for `make image-aarch64`
+    # (build an aarch64 image on x86_64 via full-system emulation, no binfmt).
     sudo apt-get install -y \
       build-essential parted e2fsprogs dosfstools rsync psmisc lsof \
       squashfs-tools libvirt-daemon-system libvirt-clients dnsmasq-base \
-      qemu-system-x86 qemu-utils socat lbzip2 pv podman \
-      dbus util-linux
+      qemu-system-x86 qemu-system-arm qemu-utils socat lbzip2 pv podman \
+      dbus util-linux curl cpio
     ;;
   fedora*|rhel|centos|rocky|almalinux)
     # Image building still requires Arch-specific tools (pacstrap, mkinitcpio,
     # arch-chroot) — build in an Arch container. These host deps cover VM
     # launching. qemu-system-x86 provides the x86_64 emulator the VM scripts
-    # use (needed when the host is aarch64, e.g. Fedora Asahi Remix).
+    # use (needed when the host is aarch64, e.g. Fedora Asahi Remix);
+    # qemu-system-aarch64 provides the aarch64 emulator `make image-aarch64`
+    # uses to build an aarch64 image on x86_64 (full-system, no binfmt).
     sudo dnf install -y \
       gcc make parted e2fsprogs dosfstools rsync psmisc lsof \
       squashfs-tools libvirt libvirt-client dnsmasq \
-      qemu-system-x86 qemu-img socat lbzip2 pv podman util-linux
+      qemu-system-x86 qemu-system-aarch64 qemu-img socat lbzip2 pv podman util-linux curl cpio
     ;;
   *)
     echo "Unsupported distro: ${ID:-unknown}" >&2

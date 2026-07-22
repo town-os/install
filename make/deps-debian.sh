@@ -6,11 +6,15 @@
 set -euo pipefail
 
 sudo apt-get update
+# qemu-system-arm supplies qemu-system-aarch64, which `make image-aarch64` uses
+# to build an aarch64 image on an x86_64 host via full-system emulation (a whole
+# emulated aarch64 machine — NOT binfmt, NOT cross-compile). curl fetches the
+# aarch64 kernel/busybox that path needs; the 9p share is built into qemu.
 sudo apt-get install -y \
   build-essential parted e2fsprogs dosfstools rsync psmisc lsof \
   squashfs-tools libvirt-daemon-system libvirt-clients dnsmasq-base \
-  qemu-system-x86 qemu-utils socat lbzip2 pv podman \
-  dbus util-linux
+  qemu-system-x86 qemu-system-arm qemu-utils socat lbzip2 pv podman \
+  dbus util-linux curl cpio
 
 # Ensure the host loop module exposes partition nodes for the image build.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

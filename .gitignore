@@ -5,6 +5,9 @@
 /*.pid
 /*.img.*
 /.build-config
+# Cached aarch64 emulated build environment (builder rootfs, kernel, initramfs)
+# created by `make image-aarch64`. Delete the dir to force a clean rebuild.
+/.build-env/
 # Repo-root install.sh is the website end-user installer (lives in ../website);
 # the build script is make/install.sh. Ignore stray copies dropped here.
 /install.sh

@@ -8,6 +8,10 @@ BUILD_ARCH       := $(shell uname -m)
 # town-os-DATE-ARCH.img; `make image RPI=1` -> town-os-DATE-ARCH-rpi.img.
 IMAGE            ?= town-os-$(BUILD_DATE)-$(BUILD_ARCH)$(if $(RPI),-rpi).img
 IMAGE_SIZE       ?= 12G
+# Where the *-log build targets tee their transcript. A build always leaves a
+# full log here even when it fails (the recipe captures the exit code through
+# the tee pipe). Same shape as town-os's test-full-log.
+LOG_DIR          ?= /tmp/town-os-install/log
 # Image tags are arch-suffixed (rc.latest-x86_64 / rc.latest-aarch64): each
 # repository publishes per-arch tags rather than a multi-arch manifest. Builds
 # are always native, so BUILD_ARCH is the right suffix for everything pulled.
@@ -79,14 +83,18 @@ RPI ?=
 .PHONY: help run run-release stop image image-release build-installer push-installer qemu qemu-fg qemu-usb \
         qemu-release virtualbox virtualbox-fg virtualbox-release \
         stop-qemu stop-virtualbox vm-ip serial clean clean-images \
-        cleanup-loopback deps deps-debian release flash rebuild-qemu image-container
+        cleanup-loopback deps deps-debian release flash rebuild-qemu image-container \
+        image-aarch64 image-aarch64-inner image-log image-aarch64-log
 
 help:
 	@echo 'Town OS Install — Makefile targets'
 	@echo
 	@echo 'Build:'
 	@echo '  image            Build the disk image (native on Arch, else same-arch Arch container)'
+	@echo '  image-log        Same as image, tee'\''d into a timestamped log under $(LOG_DIR)'
 	@echo '  image-container  Force the same-arch Arch container build path (any host)'
+	@echo '  image-aarch64    Build an aarch64 image on any host via a full-system QEMU VM (RPI=1 ok)'
+	@echo '  image-aarch64-log  Same as image-aarch64, tee'\''d into a timestamped log under $(LOG_DIR)'
 	@echo '  image-release    Build the image and compress it to .bz2'
 	@echo '  build-installer  Build the installer OCI image from town-os.img.bz2 (no push)'
 	@echo '  push-installer   Build then push the installer image (release-$(BUILD_ARCH) + dated tag)'
@@ -138,6 +146,7 @@ run: stop $(IMAGE)
 	  ${PWD}/make/run.sh $(IMAGE)
 
 IMAGE_SOURCES := $(wildcard make/install.sh make/image-container.sh make/Containerfile.build \
+                           make/image-aarch64.sh make/image-aarch64-guest.sh \
                            scripts/*.sh systemd/*.service systemd/*.timer \
                            initcpio/hooks/* initcpio/install/* town-os.yaml Makefile)
 
@@ -173,11 +182,38 @@ $(IMAGE): $(IMAGE_SOURCES) .build-config
 
 image: $(IMAGE)
 
+# Same as `image`, tee'd into a timestamped log file under $(LOG_DIR). The log is
+# always written even if the build fails: set -o pipefail makes the pipeline fail
+# with make's exit status, which we capture in $$rc and re-raise after printing
+# the log path, so tee still flushes the full transcript on failure.
+image-log:
+	@bash -c 'set -o pipefail; mkdir -p "$(LOG_DIR)"; logfile="$(LOG_DIR)/image-$$(date +%s).log"; echo "Logging to: $$logfile"; rc=0; $(MAKE) image 2>&1 | tee "$$logfile" || rc=$$?; echo "Log file: $$logfile"; exit $$rc'
+
 # Force the Arch-container build path regardless of host (install.sh runs inside
 # an x86_64 Arch container). On non-Arch hosts `make image` already dispatches
 # here automatically; this target also lets you force it on an Arch host.
 image-container: $(IMAGE_SOURCES) .build-config
 	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) TTYFORCE_DEV=$(TTYFORCE_DEV) TTYFORCE_LATEST=$(TTYFORCE_LATEST) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) SERIAL_CONSOLE=$(SERIAL_CONSOLE) RPI=$(RPI) ${PWD}/make/image-container.sh $(IMAGE_SIZE) $(IMAGE)
+
+# Build an aarch64 image on ANY host (typically x86_64) by running install.sh
+# inside a full-system qemu-system-aarch64 VM (emulation of a whole machine —
+# NOT binfmt, NOT cross-compile; see make/image-aarch64.sh). We re-enter make
+# with BUILD_ARCH=aarch64 so every arch-suffixed default flips to aarch64: the
+# output filename becomes town-os-<date>-aarch64[-rpi].img AND the baked
+# CONTROLLER_IMAGE/ROLODEX_IMAGE/UI_IMAGE tags become rc.latest-aarch64 (a
+# command-line override beats the makefile's `:=`). A user-set CONTROLLER_IMAGE
+# etc. on the outer command line still wins and threads through unchanged.
+image-aarch64:
+	$(MAKE) BUILD_ARCH=aarch64 image-aarch64-inner
+
+image-aarch64-inner: $(IMAGE_SOURCES) .build-config
+	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) TTYFORCE_DEV=$(TTYFORCE_DEV) TTYFORCE_LATEST=$(TTYFORCE_LATEST) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) SERIAL_CONSOLE=$(SERIAL_CONSOLE) RPI=$(RPI) ${PWD}/make/image-aarch64.sh $(IMAGE_SIZE) $(IMAGE)
+
+# Same as `image-aarch64`, tee'd into a timestamped log file under $(LOG_DIR).
+# The emulated aarch64 build is long and easy to lose scrollback on; this always
+# leaves a full transcript even on failure (see the note on image-log).
+image-aarch64-log:
+	@bash -c 'set -o pipefail; mkdir -p "$(LOG_DIR)"; logfile="$(LOG_DIR)/image-aarch64-$$(date +%s).log"; echo "Logging to: $$logfile"; rc=0; $(MAKE) image-aarch64 2>&1 | tee "$$logfile" || rc=$$?; echo "Log file: $$logfile"; exit $$rc'
 
 # Compressed release image, as a real file target so it is NOT rebuilt when the
 # .bz2 is already fresh. It depends on the image's *sources* rather than on
