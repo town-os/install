@@ -77,9 +77,13 @@ if command -v virsh >/dev/null 2>&1 \
   ) || true   # tolerate pipefail: literal glob when no networkd leases, or greps that filter everything out
   if [ -n "${HOST_DNS}" ]; then
     DNS_WANT=$(printf '%s\n' ${HOST_DNS} | sort | tr '\n' ' ')
+    # `|| true`: when the network has NO <forwarder> yet (first run on this host),
+    # the grep matches nothing and exits 1, which under `set -euo pipefail` would
+    # kill qemu.sh here — silently, before QEMU ever launches. An empty DNS_HAVE
+    # is the correct "no forwarders configured" value, so tolerate the failure.
     DNS_HAVE=$(sudo virsh net-dumpxml --inactive default 2>/dev/null \
       | grep -oE "<forwarder addr='[0-9.]+'/>" \
-      | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | sort | tr '\n' ' ')
+      | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | sort | tr '\n' ' ') || true
     if [ "${DNS_WANT}" != "${DNS_HAVE}" ]; then
       DNS_BLOCK=$(printf '  <dns>\n'
         printf '%s\n' ${HOST_DNS} \
