@@ -67,16 +67,6 @@ fi
 VM_BRIDGE="${VM_BRIDGE:-virbr0}"
 sudo resolvectl mdns "${VM_BRIDGE}" yes 2>/dev/null || true
 
-# qemu-bridge-helper (setuid, used by `make qemu`/`qemu-fg` to attach the guest
-# to the NAT bridge) refuses any bridge not listed in /etc/qemu/bridge.conf,
-# failing with "access denied by acl file" — so the VM gets no network, or won't
-# launch at all. The file frequently doesn't exist on a fresh install. Ensure it
-# allows the VM bridge; idempotent (only appends the rule when absent).
-sudo mkdir -p /etc/qemu
-if ! sudo grep -qxF "allow ${VM_BRIDGE}" /etc/qemu/bridge.conf 2>/dev/null; then
-  echo "allow ${VM_BRIDGE}" | sudo tee -a /etc/qemu/bridge.conf >/dev/null
-fi
-
 # Hosts running firewalld (Fedora & friends — Arch/Debian don't enable it by
 # default): the 'libvirt' zone holding the bridge allows dhcp/dns/ssh/tftp but
 # NOT mdns, and ends in a catch-all reject — guest mDNS (UDP 5353) never

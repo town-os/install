@@ -77,13 +77,9 @@ if command -v virsh >/dev/null 2>&1 \
   ) || true   # tolerate pipefail: literal glob when no networkd leases, or greps that filter everything out
   if [ -n "${HOST_DNS}" ]; then
     DNS_WANT=$(printf '%s\n' ${HOST_DNS} | sort | tr '\n' ' ')
-    # `|| true`: when the network has NO <forwarder> yet (first run on this host),
-    # the grep matches nothing and exits 1, which under `set -euo pipefail` would
-    # kill qemu.sh here — silently, before QEMU ever launches. An empty DNS_HAVE
-    # is the correct "no forwarders configured" value, so tolerate the failure.
     DNS_HAVE=$(sudo virsh net-dumpxml --inactive default 2>/dev/null \
       | grep -oE "<forwarder addr='[0-9.]+'/>" \
-      | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | sort | tr '\n' ' ') || true
+      | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | sort | tr '\n' ' ')
     if [ "${DNS_WANT}" != "${DNS_HAVE}" ]; then
       DNS_BLOCK=$(printf '  <dns>\n'
         printf '%s\n' ${HOST_DNS} \
@@ -279,17 +275,6 @@ if command -v virsh >/dev/null 2>&1 \
   fi
 fi
 
-# Ensure qemu-bridge-helper is allowed to attach the guest to this bridge.
-# The setuid helper refuses any bridge not listed in /etc/qemu/bridge.conf
-# ("access denied by acl file"), so the VM would launch with no network — or
-# not launch at all. deps.sh writes this permanently; re-assert at runtime in
-# case deps hasn't been re-run. Idempotent (only appends the rule when absent).
-if ! sudo grep -qxF "allow ${VM_BRIDGE}" /etc/qemu/bridge.conf 2>/dev/null; then
-  sudo mkdir -p /etc/qemu
-  echo "allow ${VM_BRIDGE}" | sudo tee -a /etc/qemu/bridge.conf >/dev/null
-  echo "Allowed ${VM_BRIDGE} in /etc/qemu/bridge.conf for qemu-bridge-helper"
-fi
-
 # Re-assert mDNS on the bridge: resolvectl's per-link setting is runtime-only
 # and is lost whenever the bridge is recreated (e.g. every reboot), breaking
 # guest .local resolution (vm-ip.sh). Idempotent, so do it every launch.
@@ -334,8 +319,13 @@ FIRMWARE_ARGS=()
 GFX_ARGS=()
 case "${ARCH}" in
   x86_64)
-    # SeaBIOS is built into qemu-system-x86_64; no firmware/display args needed
-    # (the headless serial path below drives the console).
+    # SeaBIOS is built into qemu-system-x86_64; no firmware args needed. Give the
+    # guest a graphical console window, same as the aarch64 path. The PC machine
+    # already has a default VGA adapter and PS/2 keyboard/mouse, so -display gtk
+    # alone is enough (no virtio-gpu / USB HID devices). Setting GFX_ARGS routes
+    # this through the graphical-foreground path below: a window, run as the
+    # invoking user, serial exported to the socket (make serial).
+    GFX_ARGS=(-display gtk)
     ;;
   aarch64)
     MACHINE_ARGS=(-machine virt,gic-version=max)

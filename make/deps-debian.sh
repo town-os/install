@@ -31,17 +31,6 @@ printf '[Resolve]\nMulticastDNS=yes\n' | sudo tee /etc/systemd/resolved.conf.d/m
 sudo resolvectl mdns virbr0 yes 2>/dev/null || true
 sudo systemctl reload systemd-resolved 2>/dev/null || true
 
-# qemu-bridge-helper (setuid, used by `make qemu`/`qemu-fg` to attach the guest
-# to the NAT bridge) refuses any bridge not listed in /etc/qemu/bridge.conf,
-# failing with "access denied by acl file" — so the VM gets no network, or won't
-# launch at all. The file frequently doesn't exist on a fresh install. Ensure it
-# allows the VM bridge; idempotent (only appends the rule when absent).
-VM_BRIDGE="${VM_BRIDGE:-virbr0}"
-sudo mkdir -p /etc/qemu
-if ! sudo grep -qxF "allow ${VM_BRIDGE}" /etc/qemu/bridge.conf 2>/dev/null; then
-  echo "allow ${VM_BRIDGE}" | sudo tee -a /etc/qemu/bridge.conf >/dev/null
-fi
-
 echo ""
 echo "Host dependencies installed."
 echo ""
