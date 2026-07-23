@@ -1,7 +1,57 @@
 BUILD_DATE       := $(shell date +%Y-%m-%d)
-# Builds are always native, so the host arch (uname -m) is the image arch. Tag
-# the filename with it so x86_64 and aarch64 images don't get confused.
-BUILD_ARCH       := $(shell uname -m)
+# The REAL host architecture (uname -m). BUILD_ARCH is derived from TARGET below
+# and may differ from it (a cross-target build); HOST_ARCH never changes, so the
+# build machinery can always tell a native build from an emulated one.
+HOST_ARCH        := $(shell uname -m)
+
+# TARGET selects the architecture/flavor for EVERY build target (image,
+# image-release, release, qemu, flash, ...). Empty (the default) is a native
+# build for the host arch. Recognized values:
+#   x86_64 (x86/amd64) native UEFI/GRUB PC image
+#   aarch64 (arm64)    aarch64 UEFI/GRUB image — generic Linux / Apple-Silicon VM
+#   rpi                aarch64 native-boot Raspberry Pi image (Pi 4/400/CM4, Pi 5/CM5)
+# On an x86_64 host the aarch64/rpi targets are produced via full-system emulation
+# (make/image-aarch64.sh — a whole emulated aarch64 MACHINE, NOT binfmt/qemu-user
+# and NOT cross-compilation, so "image arch == build-host arch" still holds; the
+# build host is simply virtual). An x86_64 target on a non-x86_64 host is rejected
+# (there is no x86 emulation path — build it on an x86_64 host).
+TARGET ?=
+
+# Derive BUILD_ARCH (and RPI for the Pi flavor) from TARGET. BUILD_ARCH is the
+# image's architecture and thus the right suffix for the filename and for every
+# arch-suffixed image tag (rc.latest-<arch>, release-<arch>, ...).
+ifeq ($(TARGET),)
+BUILD_ARCH := $(HOST_ARCH)
+else ifneq ($(filter x86_64 x86 amd64,$(TARGET)),)
+BUILD_ARCH := x86_64
+else ifneq ($(filter aarch64 arm64,$(TARGET)),)
+BUILD_ARCH := aarch64
+else ifeq ($(TARGET),rpi)
+BUILD_ARCH := aarch64
+RPI := 1
+else
+$(error unknown TARGET '$(TARGET)' — expected one of: x86_64, aarch64, rpi)
+endif
+
+# EMULATE is set when the requested arch differs from the host arch: the image is
+# built inside a full-system qemu-system-aarch64 VM (make/image-aarch64.sh)
+# instead of the native builder (make/image.sh). Only aarch64 can be emulated; an
+# x86_64 image on a non-x86_64 host has no emulation path and is an error. It is a
+# derived variable, not a user knob — set TARGET, not EMULATE.
+EMULATE :=
+ifneq ($(BUILD_ARCH),$(HOST_ARCH))
+ifeq ($(BUILD_ARCH),aarch64)
+EMULATE := 1
+else
+$(error cannot build a $(BUILD_ARCH) image on a $(HOST_ARCH) host — no emulation path; build it on a $(BUILD_ARCH) host)
+endif
+endif
+
+# The image builder: native (make/image.sh) normally, or the full-system aarch64
+# emulator (make/image-aarch64.sh) for a cross-arch build. Both take the same
+# "IMAGE_SIZE IMAGE" signature and honor the same env vars.
+IMAGE_BUILDER := $(if $(EMULATE),make/image-aarch64.sh,make/image.sh)
+
 # RPI=1 produces a fundamentally different (native-boot Raspberry Pi) image, so
 # give it a distinct filename: it is a SEPARATE make target/artifact that coexists
 # with the normal UEFI/GRUB image instead of clobbering it. `make image` ->
@@ -75,30 +125,36 @@ USB_PHONE   ?=
 # (console=ttyS0,115200) so the machine boots headless with no keyboard/monitor.
 SERIAL_CONSOLE ?=
 
-# When non-empty, build a native-boot Raspberry Pi image (Pi 4/400/CM4, Pi 5/CM5)
-# instead of the UEFI/GRUB image: linux-rpi kernel + GPU firmware + config.txt on
-# the FAT partition, no GRUB. aarch64-only (build on an aarch64 host).
+# RPI=1 is shorthand for TARGET=rpi's Pi flavor on a native aarch64 host: a
+# native-boot Raspberry Pi image (Pi 4/400/CM4, Pi 5/CM5) — linux-rpi kernel + GPU
+# firmware + config.txt on the FAT partition, no GRUB. It is aarch64-only and gives
+# the image a distinct -rpi filename so it coexists with the UEFI/GRUB image
+# instead of clobbering it. To cross-build a Pi image on an x86_64 host use
+# TARGET=rpi (which sets RPI=1 and emulates); bare RPI=1 stays native (aarch64
+# host only). TARGET=rpi and RPI=1 both flow: `make image` -> town-os-DATE-arch.img,
+# with the Pi flavor -> town-os-DATE-aarch64-rpi.img.
 RPI ?=
 
 .PHONY: help run run-release stop image image-release build-installer push-installer qemu qemu-fg qemu-usb \
         qemu-release virtualbox virtualbox-fg virtualbox-release \
         stop-qemu stop-virtualbox vm-ip serial clean clean-images \
         cleanup-loopback deps deps-debian release flash rebuild-qemu image-container \
-        image-aarch64 image-aarch64-inner image-log image-aarch64-log
+        image-log
 
 help:
 	@echo 'Town OS Install — Makefile targets'
 	@echo
 	@echo 'Build:'
-	@echo '  image            Build the disk image (native on Arch, else same-arch Arch container)'
+	@echo '  image            Build the disk image for TARGET (default: native host arch)'
+	@echo '                   TARGET=x86_64|aarch64|rpi; aarch64/rpi emulate on an x86 host'
 	@echo '  image-log        Same as image, tee'\''d into a timestamped log under $(LOG_DIR)'
-	@echo '  image-container  Force the same-arch Arch container build path (any host)'
-	@echo '  image-aarch64    Build an aarch64 image on any host via a full-system QEMU VM (RPI=1 ok)'
-	@echo '  image-aarch64-log  Same as image-aarch64, tee'\''d into a timestamped log under $(LOG_DIR)'
+	@echo '  image-container  Force the same-arch Arch container build path (native only)'
 	@echo '  image-release    Build the image and compress it to .bz2'
 	@echo '  build-installer  Build the installer OCI image from town-os.img.bz2 (no push)'
 	@echo '  push-installer   Build then push the installer image (release-$(BUILD_ARCH) + dated tag)'
 	@echo '  release          Build, compress, and push the installer image'
+	@echo '                   TARGET=x86_64|aarch64|rpi picks the arch/flavor'
+	@echo '                   (aarch64/rpi cross-build via emulation on an x86 host)'
 	@echo
 	@echo 'Run (QEMU):'
 	@echo '  qemu             Build if stale, launch QEMU in the background'
@@ -137,6 +193,7 @@ help:
 	@echo '  IMAGE_HOSTNAME, LOCAL_DNS, TTYFORCE_DEV, TTYFORCE_LATEST, KEEP_MOUNT'
 	@echo '  SERIAL_CONSOLE   Set non-empty to default the image to a serial console (no keyboard)'
 	@echo '  RPI              Set non-empty to build a native Raspberry Pi image (Pi 4+; aarch64 host only)'
+	@echo '  TARGET           image/release arch: x86_64 | aarch64 | rpi (aarch64/rpi emulate on x86)'
 
 rebuild-qemu: stop clean image qemu
 
@@ -177,9 +234,15 @@ FORCE:
 	  'RPI=$(RPI)' \
 	  'IMAGE_SIZE=$(IMAGE_SIZE)' > $@
 
+# Uses $(IMAGE_BUILDER): the native builder (make/image.sh) normally, or the
+# full-system aarch64 emulator (make/image-aarch64.sh) when TARGET requests an
+# arch the host can't build natively (EMULATE=1). Both take the same
+# "IMAGE_SIZE IMAGE" signature and honor the same env vars.
 $(IMAGE): $(IMAGE_SOURCES) .build-config
-	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) TTYFORCE_DEV=$(TTYFORCE_DEV) TTYFORCE_LATEST=$(TTYFORCE_LATEST) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) SERIAL_CONSOLE=$(SERIAL_CONSOLE) RPI=$(RPI) ${PWD}/make/image.sh $(IMAGE_SIZE) $(IMAGE)
+	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) TTYFORCE_DEV=$(TTYFORCE_DEV) TTYFORCE_LATEST=$(TTYFORCE_LATEST) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) SERIAL_CONSOLE=$(SERIAL_CONSOLE) RPI=$(RPI) ${PWD}/$(IMAGE_BUILDER) $(IMAGE_SIZE) $(IMAGE)
 
+# Build the disk image for TARGET (default: native host arch). TARGET=aarch64 or
+# TARGET=rpi on an x86_64 host build via full-system emulation automatically.
 image: $(IMAGE)
 
 # Same as `image`, tee'd into a timestamped log file under $(LOG_DIR). The log is
@@ -190,30 +253,13 @@ image-log:
 	@bash -c 'set -o pipefail; mkdir -p "$(LOG_DIR)"; logfile="$(LOG_DIR)/image-$$(date +%s).log"; echo "Logging to: $$logfile"; rc=0; $(MAKE) image 2>&1 | tee "$$logfile" || rc=$$?; echo "Log file: $$logfile"; exit $$rc'
 
 # Force the Arch-container build path regardless of host (install.sh runs inside
-# an x86_64 Arch container). On non-Arch hosts `make image` already dispatches
-# here automatically; this target also lets you force it on an Arch host.
+# a same-arch Arch container). On non-Arch hosts `make image` already dispatches
+# here automatically; this target also lets you force it on an Arch host. The
+# container build is NATIVE-only (no emulation), so it can't serve a cross-arch
+# TARGET — for that use `make image TARGET=aarch64|rpi`, which emulates.
 image-container: $(IMAGE_SOURCES) .build-config
+	@[ -z "$(EMULATE)" ] || { echo 'image-container: cannot build a $(BUILD_ARCH) image on a $(HOST_ARCH) host via the container path (native-only); use `make image TARGET=$(TARGET)` for the emulated build'; exit 1; }
 	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) TTYFORCE_DEV=$(TTYFORCE_DEV) TTYFORCE_LATEST=$(TTYFORCE_LATEST) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) SERIAL_CONSOLE=$(SERIAL_CONSOLE) RPI=$(RPI) ${PWD}/make/image-container.sh $(IMAGE_SIZE) $(IMAGE)
-
-# Build an aarch64 image on ANY host (typically x86_64) by running install.sh
-# inside a full-system qemu-system-aarch64 VM (emulation of a whole machine —
-# NOT binfmt, NOT cross-compile; see make/image-aarch64.sh). We re-enter make
-# with BUILD_ARCH=aarch64 so every arch-suffixed default flips to aarch64: the
-# output filename becomes town-os-<date>-aarch64[-rpi].img AND the baked
-# CONTROLLER_IMAGE/ROLODEX_IMAGE/UI_IMAGE tags become rc.latest-aarch64 (a
-# command-line override beats the makefile's `:=`). A user-set CONTROLLER_IMAGE
-# etc. on the outer command line still wins and threads through unchanged.
-image-aarch64:
-	$(MAKE) BUILD_ARCH=aarch64 image-aarch64-inner
-
-image-aarch64-inner: $(IMAGE_SOURCES) .build-config
-	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) TTYFORCE_DEV=$(TTYFORCE_DEV) TTYFORCE_LATEST=$(TTYFORCE_LATEST) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) SERIAL_CONSOLE=$(SERIAL_CONSOLE) RPI=$(RPI) ${PWD}/make/image-aarch64.sh $(IMAGE_SIZE) $(IMAGE)
-
-# Same as `image-aarch64`, tee'd into a timestamped log file under $(LOG_DIR).
-# The emulated aarch64 build is long and easy to lose scrollback on; this always
-# leaves a full transcript even on failure (see the note on image-log).
-image-aarch64-log:
-	@bash -c 'set -o pipefail; mkdir -p "$(LOG_DIR)"; logfile="$(LOG_DIR)/image-aarch64-$$(date +%s).log"; echo "Logging to: $$logfile"; rc=0; $(MAKE) image-aarch64 2>&1 | tee "$$logfile" || rc=$$?; echo "Log file: $$logfile"; exit $$rc'
 
 # Compressed release image, as a real file target so it is NOT rebuilt when the
 # .bz2 is already fresh. It depends on the image's *sources* rather than on
@@ -312,4 +358,9 @@ cleanup-loopback:
 flash: $(IMAGE)
 	${PWD}/make/flash.sh $(IMAGE)
 
+# Build, compress, and push the installer image for TARGET (default: native host
+# arch, honoring RPI=1). TARGET is resolved at the top of this Makefile into
+# BUILD_ARCH / RPI / EMULATE, so the whole chain (push-installer -> build-installer
+# -> $(IMAGE).bz2 -> $(IMAGE)) already targets the right arch/flavor — including
+# the emulated aarch64/rpi cross-build on an x86_64 host — with no re-entry here.
 release: push-installer
