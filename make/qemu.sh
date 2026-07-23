@@ -325,11 +325,28 @@ case "${ARCH}" in
   x86_64)
     # SeaBIOS is built into qemu-system-x86_64; no firmware args needed. Give the
     # guest a graphical console window, same as the aarch64 path. The PC machine
-    # already has a default VGA adapter and PS/2 keyboard/mouse, so -display gtk
-    # alone is enough (no virtio-gpu / USB HID devices). Setting GFX_ARGS routes
-    # this through the graphical-foreground path below: a window, run as the
-    # invoking user, serial exported to the socket (make serial).
-    GFX_ARGS=(-display gtk)
+    # already has a default VGA adapter, so no virtio-gpu is needed here.
+    #
+    # A usb-tablet IS needed, even though the PC machine has a built-in PS/2
+    # mouse. WHY: the PS/2 mouse is a RELATIVE pointing device, and a relative
+    # pointer forces QEMU's GTK display to grab and confine the host cursor to
+    # sync it with the guest's. On Wayland/Hyprland that grab is taken and
+    # released inconsistently, and when it drops the host pointer can land
+    # outside the QEMU window — which, under focus-follows-mouse (Hyprland's
+    # default, input:follow_mouse=1), moves KEYBOARD focus off the VM instantly
+    # and with no visible cue. Keystrokes then go to whatever sits under the
+    # cursor and the VM looks frozen mid-typing, which is indistinguishable from
+    # a guest lockup (the guest is fine; it simply stops being sent input). It
+    # bites hardest on long entries like the installer's GitHub-username field,
+    # where there is time for the pointer to drift. usb-tablet reports ABSOLUTE
+    # coordinates, so QEMU never needs a pointer grab at all and focus stays put.
+    # usb-kbd comes along for parity with the aarch64 path and to keep fast
+    # typing off the legacy PS/2 queue; the PS/2 keyboard remains as a fallback.
+    # Both ride the -device qemu-xhci controller added below, and the guest-side
+    # drivers are already in the initrd (xhci_pci/xhci_hcd in configure.sh's
+    # WANT_MODULES, plus the mkinitcpio `keyboard` hook for usbhid), so they work
+    # in the ttyforce installer too — not just after switch_root.
+    GFX_ARGS=(-device usb-kbd -device usb-tablet -display gtk)
     ;;
   aarch64)
     MACHINE_ARGS=(-machine virt,gic-version=max)
@@ -403,18 +420,33 @@ else
   echo "      boot under TCG is extremely slow; the display may stay blank for minutes." >&2
 fi
 
+# HMP monitor on a unix socket, exported on every path that has a window or runs
+# in the background. WHY: when the guest looks "locked up" there is otherwise no
+# way to tell a wedged kernel from a console that simply isn't receiving
+# keystrokes. The monitor answers both — `screendump` captures the guest
+# framebuffer regardless of whether the window ever mapped or which workspace it
+# landed on, and `sendkey` injects input straight into the guest, bypassing the
+# compositor entirely. It costs nothing when unused.
+#   socat - UNIX-CONNECT:/tmp/town-os-monitor.sock
+MONITOR_SOCK="/tmp/town-os-monitor.sock"
+
 DAEMON_ARGS=()
 SERIAL_ARGS=()
+MONITOR_ARGS=()
 if [ "${FOREGROUND}" != "1" ]; then
   DAEMON_ARGS=(-daemonize -pidfile qemu.pid)
   SERIAL_ARGS=(-serial "unix:/tmp/town-os-serial.sock,server=on,wait=off")
+  MONITOR_ARGS=(-monitor "unix:${MONITOR_SOCK},server=on,wait=off")
 elif [ "${#GFX_ARGS[@]}" -gt 0 ]; then
   # Graphical foreground (aarch64): the console is the GTK window; still export
   # the serial port on a socket so `make serial` can attach.
   DAEMON_ARGS=(-pidfile qemu.pid)
   SERIAL_ARGS=(-serial "unix:/tmp/town-os-serial.sock,server=on,wait=off")
+  MONITOR_ARGS=(-monitor "unix:${MONITOR_SOCK},server=on,wait=off")
 else
   # Headless foreground (x86_64): multiplex the serial console onto stdio.
+  # The monitor is already reachable there via the stdio mux (Ctrl-a c), so no
+  # separate socket is exported.
   DAEMON_ARGS=(-pidfile qemu.pid)
   SERIAL_ARGS=(-nographic -serial mon:stdio)
 fi
@@ -601,11 +633,13 @@ QEMU_CMD=(
   "${USB_PHONE_ARGS[@]}"
   "${GFX_ARGS[@]}"
   "${SERIAL_ARGS[@]}"
+  "${MONITOR_ARGS[@]}"
   "${DAEMON_ARGS[@]}"
 )
 
 # A prior root run may have left a root-owned serial socket; clear it either way.
 rm -f /tmp/town-os-serial.sock 2>/dev/null || sudo rm -f /tmp/town-os-serial.sock 2>/dev/null || true
+rm -f "${MONITOR_SOCK}" 2>/dev/null || sudo rm -f "${MONITOR_SOCK}" 2>/dev/null || true
 
 # qemu-usb on the graphical path runs QEMU as the INVOKING USER (below) — a root
 # GTK client fails to authorize to the user's Wayland/X session ("authorization
