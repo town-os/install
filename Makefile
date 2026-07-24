@@ -160,6 +160,7 @@ help:
 	@echo '  qemu             Build if stale, launch QEMU in the background'
 	@echo '  qemu-fg          Build if stale, launch QEMU in the foreground (serial attached)'
 	@echo '  qemu-usb         Launch QEMU in the foreground from a physical USB (USB_DEV=/dev/sdX); no build'
+	@echo '                   TARGET=aarch64|rpi emulates a foreign-arch stick on an x86 host'
 	@echo '  run              Build if stale, launch a libvirt-managed VM'
 	@echo '  rebuild-qemu     stop + clean + image + qemu'
 	@echo '  serial           Attach to a running QEMU serial console (Ctrl-] to detach)'
@@ -312,9 +313,15 @@ qemu-fg: $(IMAGE)
 #   make qemu-usb USB_DEV=/dev/sda
 # The device is opened read-only (snapshot): guest writes are discarded, so the
 # real USB is never modified. The four data disks (disk0-3.img) are still used.
+#
+# TARGET selects the guest ARCHITECTURE (via BUILD_ARCH): with no TARGET the
+# stick boots natively (KVM). TARGET=aarch64 (or rpi) on an x86_64 host boots the
+# stick under full-system qemu-system-aarch64 emulation (no KVM, slow) so an
+# aarch64 image can be tested without aarch64 hardware, e.g.:
+#   make qemu-usb TARGET=aarch64 USB_DEV=/dev/sda
 qemu-usb:
 	@[ -n "$(USB_DEV)" ] || { echo 'error: set USB_DEV=/dev/sdX (the USB block device to boot)'; exit 1; }
-	FOREGROUND=1 USB_DEV=$(USB_DEV) VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_CPUS=$(VM_CPUS) VM_BRIDGE=$(VM_BRIDGE) \
+	FOREGROUND=1 USB_DEV=$(USB_DEV) QEMU_ARCH=$(BUILD_ARCH) RPI=$(RPI) VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_CPUS=$(VM_CPUS) VM_BRIDGE=$(VM_BRIDGE) \
 	  VM_NAME=$(VM_NAME) VM_IP=$(VM_IP) USB_PHONE=$(USB_PHONE) VM_NET6_PREFIX=$(VM_NET6_PREFIX) VM_IP6=$(VM_IP6) ${PWD}/make/qemu.sh $(USB_DEV)
 
 stop:

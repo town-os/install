@@ -307,19 +307,42 @@ for i in 0 1 2 3; do
   fi
 done
 
-# Native architecture only — NEVER cross-arch, NEVER emulate a foreign arch.
-# We always run qemu-system-<host arch>, so the guest arch always equals the
-# host arch (x86_64 host -> x86_64 guest, aarch64 host -> aarch64 guest).
-ARCH=$(uname -m)
+# Guest architecture. Defaults to the host arch (the native, KVM-accelerated
+# path — x86_64 host -> x86_64 guest, aarch64 host -> aarch64 guest). QEMU_ARCH
+# overrides it to boot a USB image of a DIFFERENT architecture (set by the
+# `make qemu-usb TARGET=aarch64` path so an aarch64 stick can be tested on an
+# x86_64 host). A foreign QEMU_ARCH runs qemu-system-<arch> under full-system
+# TCG emulation (a whole emulated MACHINE — NOT binfmt/qemu-user, NOT
+# cross-anything; the guest kernel runs as native code inside the emulated box),
+# with KVM disabled (the ACCEL block below gates KVM on arch == host arch). This
+# is the same scoped, opt-in exception the emulated aarch64 image *build* uses:
+# native same-arch boots keep the KVM fast path; only an explicit foreign arch
+# emulates, and it is slow.
+HOST_ARCH=$(uname -m)
+ARCH="${QEMU_ARCH:-${HOST_ARCH}}"
 QEMU_BIN="qemu-system-${ARCH}"
 if ! command -v "${QEMU_BIN}" >/dev/null 2>&1; then
   echo "error: ${QEMU_BIN} not found — install QEMU for this architecture." >&2
   exit 1
 fi
 
+# RPI=1 (set by `make qemu-usb TARGET=rpi`) boots a Raspberry Pi image. A Pi
+# image has NO UEFI bootloader — the build stages kernel8.img/initramfs/config.txt
+# on the FAT partition and real Pi GPU firmware loads the kernel directly. QEMU's
+# 'virt' machine can't run that firmware flow, so booting a Pi image through edk2
+# just drops to the UEFI shell ("no bootable device"). Instead we DIRECT-KERNEL-
+# BOOT: extract the kernel + initramfs from the stick's FAT partition and hand
+# them to QEMU with -kernel/-initrd, no UEFI. Pi-only, aarch64-only.
+RPI="${RPI:-}"
+if [ -n "${RPI}" ] && [ "${ARCH}" != "aarch64" ]; then
+  echo "error: RPI is aarch64-only; use 'make qemu-usb TARGET=rpi' (got arch '${ARCH}')." >&2
+  exit 1
+fi
+
 # Architecture-specific machine, firmware, and display.
 MACHINE_ARGS=()
 FIRMWARE_ARGS=()
+KERNEL_ARGS=()
 GFX_ARGS=()
 case "${ARCH}" in
   x86_64)
@@ -350,6 +373,88 @@ case "${ARCH}" in
     ;;
   aarch64)
     MACHINE_ARGS=(-machine virt,gic-version=max)
+    if [ -n "${RPI}" ]; then
+      # Pi image: direct-kernel-boot (no UEFI). Extract kernel8.img +
+      # initramfs-linux.img + cmdline.txt from the boot source's FAT partition
+      # (part 2 of the GPT — part 1 is the unused 1 MiB BIOS-boot slot). The USB
+      # disk is still attached below so the initrd finds the ext4 data/root.sfs
+      # via root=UUID=; direct boot only replaces the firmware/bootloader stage.
+      #
+      # Locate the FAT partition. For a physical block device, lsblk lists the
+      # disk then its partitions in order, so line 3 is part 2. For an image file
+      # attach a partscan loop just to read it (the guest still boots from the
+      # file itself, so detach the loop right after extraction).
+      RPI_LOOP=""
+      if [ -b "${BOOT_SRC}" ]; then
+        _p2=$(lsblk -rno NAME "${BOOT_SRC}" 2>/dev/null | sed -n '3p')
+        [ -n "${_p2}" ] && BOOTFS_PART="/dev/${_p2}"
+      else
+        RPI_LOOP=$(sudo losetup -Pf --show "${BOOT_SRC}")
+        BOOTFS_PART="${RPI_LOOP}p2"
+      fi
+      if [ -z "${BOOTFS_PART:-}" ] || [ ! -b "${BOOTFS_PART}" ]; then
+        echo "error: could not find the FAT (part 2) partition on ${BOOT_SRC}." >&2
+        [ -n "${RPI_LOOP}" ] && sudo losetup -d "${RPI_LOOP}" 2>/dev/null || true
+        exit 1
+      fi
+      RPI_MNT=$(mktemp -d)
+      RPI_KDIR=$(mktemp -d "${TMPDIR:-/tmp}/town-rpi-boot.XXXXXX")
+      if ! sudo mount -o ro "${BOOTFS_PART}" "${RPI_MNT}"; then
+        echo "error: could not mount ${BOOTFS_PART} (the Pi FAT partition)." >&2
+        [ -n "${RPI_LOOP}" ] && sudo losetup -d "${RPI_LOOP}" 2>/dev/null || true
+        exit 1
+      fi
+      if ! sudo cp "${RPI_MNT}/kernel8.img" "${RPI_MNT}/initramfs-linux.img" "${RPI_KDIR}/" 2>/dev/null \
+         || ! RPI_CMDLINE=$(sudo cat "${RPI_MNT}/cmdline.txt" 2>/dev/null); then
+        echo "error: ${BOOTFS_PART} is missing kernel8.img/initramfs-linux.img/cmdline.txt." >&2
+        echo "       Is this actually a Raspberry Pi (TARGET=rpi) image?" >&2
+        sudo umount "${RPI_MNT}"; rmdir "${RPI_MNT}"
+        [ -n "${RPI_LOOP}" ] && sudo losetup -d "${RPI_LOOP}" 2>/dev/null || true
+        exit 1
+      fi
+      sudo umount "${RPI_MNT}"; rmdir "${RPI_MNT}"
+      [ -n "${RPI_LOOP}" ] && sudo losetup -d "${RPI_LOOP}" 2>/dev/null || true
+      sudo chown "$(id -u):$(id -g)" "${RPI_KDIR}/kernel8.img" "${RPI_KDIR}/initramfs-linux.img"
+      # Rewrite the kernel command line for QEMU 'virt'. Two edits:
+      #
+      # 1. The Pi firmware rewrites the `serial0` alias to the board's real UART;
+      #    there is no such alias on virt, whose PL011 is ttyAMA0 — so map
+      #    console=serial0 -> console=ttyAMA0. root=UUID=/rootfstype/rootwait/rw
+      #    are kept verbatim so the squashfs initrd finds the data disk.
+      #
+      # 2. DROP console=tty1, leaving ttyAMA0 as the sole console (/dev/console).
+      #    WHY: the linux-rpi kernel is built purely for real Pi display hardware
+      #    (vc4/v3d/pl111/DSI panels) and has NO driver for any display QEMU's
+      #    'virt' machine can emulate — no virtio_gpu, no bochs, no VGA, no
+      #    simpledrm. So tty1 can NEVER get a framebuffer here; it is a permanently
+      #    dead console. The town-installer initrd hook points ttyforce at the
+      #    *last* console (`--tty /dev/$last_console`), so with tty1 present-and-last
+      #    ttyforce launches on the dead framebuffer and exits 1, wedging the boot
+      #    with no root provisioned. Removing tty1 runs the installer on ttyAMA0,
+      #    which is wired to the foreground terminal below (headless serial). This
+      #    is a launch-time -append edit only; the real-Pi image on the stick keeps
+      #    its `console=serial0 console=tty1` (HDMI-primary on real hardware).
+      RPI_APPEND=$(printf '%s' "${RPI_CMDLINE}" \
+        | sed 's/console=serial0/console=ttyAMA0/g' \
+        | sed -E 's/[[:space:]]*console=tty1//g')
+      KERNEL_ARGS=(
+        -kernel "${RPI_KDIR}/kernel8.img"
+        -initrd "${RPI_KDIR}/initramfs-linux.img"
+        -append "${RPI_APPEND}"
+      )
+      echo "Pi image: direct-kernel-boot (kernel8.img + initramfs from ${BOOTFS_PART}, no UEFI)"
+      echo "  cmdline: ${RPI_APPEND}"
+      # Keep a GTK WINDOW (not headless), but linux-rpi can drive no QEMU 'virt'
+      # display device (see above), so the VGA surface stays "Display output is
+      # not active". Instead show the guest's SERIAL console (ttyAMA0) INSIDE the
+      # window as a text console: -serial vc (set in the foreground branch below
+      # via RPI_SERIAL_VC) makes it a GTK tab, and show-tabs=on exposes the tab
+      # bar — switch to the "serial0" tab to see and drive the installer. The
+      # virtio-gpu tab is still there but inert. (For a real graphical framebuffer
+      # console, use TARGET=aarch64, whose linux-aarch64 kernel has virtio_gpu.)
+      GFX_ARGS=(-device virtio-gpu-pci -device usb-kbd -device usb-tablet -display gtk,show-tabs=on)
+      RPI_SERIAL_VC=1
+    else
     # qemu-system-aarch64 'virt' has NO built-in firmware. Without UEFI (edk2)
     # via pflash it sits at a blank display forever — there is nothing to read
     # the image's /EFI/BOOT/BOOTAA64.EFI. Locate the installed edk2 code+vars
@@ -397,6 +502,7 @@ case "${ARCH}" in
     # initrd's mkinitcpio `keyboard` hook provides the guest-side USB-HID drivers.
     # Serial is still exported on a socket below.
     GFX_ARGS=(-device virtio-gpu-pci -device usb-kbd -device usb-tablet -display gtk)
+    fi
     ;;
   *)
     echo "error: unsupported host architecture '${ARCH}'." >&2
@@ -404,20 +510,27 @@ case "${ARCH}" in
     ;;
 esac
 
-# CPU/acceleration. Use KVM + -cpu host whenever /dev/kvm is present — on BOTH
-# x86_64 and aarch64 (incl. Apple Silicon / Asahi, where KVM does work). KVM is
-# not just a speed-up here: under pure TCG emulation a full aarch64 UEFI boot
-# (firmware -> GRUB -> kernel) is so slow that the guest takes many minutes to
-# even initialize the framebuffer, so the display appears blank. With KVM the
-# kernel is up and painting tty0 within seconds. Either path runs the HOST's own
-# architecture — never cross-arch, never a foreign ISA under emulation.
+# CPU/acceleration. Use KVM + -cpu host whenever the guest arch equals the HOST
+# arch and /dev/kvm is present — on BOTH x86_64 and aarch64 (incl. Apple Silicon
+# / Asahi, where KVM does work). KVM is not just a speed-up here: under pure TCG
+# emulation a full aarch64 UEFI boot (firmware -> GRUB -> kernel) is so slow that
+# the guest takes many minutes to even initialize the framebuffer, so the display
+# appears blank. With KVM the kernel is up and painting tty0 within seconds.
+# A FOREIGN guest arch (QEMU_ARCH != host, e.g. an aarch64 USB stick on x86_64)
+# cannot use KVM at all — the host CPU can't virtualize a different ISA — so it
+# falls through to TCG regardless of /dev/kvm. Expect it to be very slow.
 ACCEL_ARGS=()
-if [ -e /dev/kvm ]; then
+if [ "${ARCH}" = "${HOST_ARCH}" ] && [ -e /dev/kvm ]; then
   ACCEL_ARGS=(-enable-kvm -cpu host)
 else
   ACCEL_ARGS=(-cpu max)
-  echo "note: /dev/kvm absent — running native ${ARCH} under TCG. An aarch64 UEFI" >&2
-  echo "      boot under TCG is extremely slow; the display may stay blank for minutes." >&2
+  if [ "${ARCH}" != "${HOST_ARCH}" ]; then
+    echo "note: emulating ${ARCH} on a ${HOST_ARCH} host under full-system TCG (no KVM for a" >&2
+    echo "      foreign arch). This is SLOW — an aarch64 UEFI boot can take minutes to paint." >&2
+  else
+    echo "note: /dev/kvm absent — running native ${ARCH} under TCG. An aarch64 UEFI" >&2
+    echo "      boot under TCG is extremely slow; the display may stay blank for minutes." >&2
+  fi
 fi
 
 # HMP monitor on a unix socket, exported on every path that has a window or runs
@@ -438,14 +551,22 @@ if [ "${FOREGROUND}" != "1" ]; then
   SERIAL_ARGS=(-serial "unix:/tmp/town-os-serial.sock,server=on,wait=off")
   MONITOR_ARGS=(-monitor "unix:${MONITOR_SOCK},server=on,wait=off")
 elif [ "${#GFX_ARGS[@]}" -gt 0 ]; then
-  # Graphical foreground (aarch64): the console is the GTK window; still export
-  # the serial port on a socket so `make serial` can attach.
+  # Graphical foreground (aarch64). Normally the console is the GTK VGA window and
+  # the serial port is exported on a socket for `make serial`. The emulated Pi
+  # boot (RPI_SERIAL_VC) has no working VGA, so its serial console goes to a GTK
+  # `vc` instead — it shows up as the "serial0" tab IN the window and is the
+  # interactive console there (no socket, no `make serial`).
   DAEMON_ARGS=(-pidfile qemu.pid)
-  SERIAL_ARGS=(-serial "unix:/tmp/town-os-serial.sock,server=on,wait=off")
+  if [ -n "${RPI_SERIAL_VC:-}" ]; then
+    SERIAL_ARGS=(-serial vc)
+  else
+    SERIAL_ARGS=(-serial "unix:/tmp/town-os-serial.sock,server=on,wait=off")
+  fi
   MONITOR_ARGS=(-monitor "unix:${MONITOR_SOCK},server=on,wait=off")
 else
-  # Headless foreground (x86_64): multiplex the serial console onto stdio.
-  # The monitor is already reachable there via the stdio mux (Ctrl-a c), so no
+  # Headless foreground (x86_64, and the emulated Pi boot whose linux-rpi kernel
+  # can drive no QEMU display): multiplex the serial console onto stdio. The
+  # monitor is already reachable there via the stdio mux (Ctrl-a c), so no
   # separate socket is exported.
   DAEMON_ARGS=(-pidfile qemu.pid)
   SERIAL_ARGS=(-nographic -serial mon:stdio)
@@ -614,6 +735,7 @@ QEMU_CMD=(
   "${ACCEL_ARGS[@]}"
   "${MACHINE_ARGS[@]}"
   "${FIRMWARE_ARGS[@]}"
+  "${KERNEL_ARGS[@]}"
   -m "${VM_MEMORY}"
   -smp "${VM_CPUS}"
   -netdev "bridge,id=net0,br=${VM_BRIDGE}"
@@ -663,7 +785,12 @@ fi
 #    the bridge attaches via the setuid qemu-bridge-helper, the image is opened
 #    read-only via snapshot=on, and for a USB device boot the user was granted
 #    read access just above (so QEMU-as-user can still read the raw device).
-#  - Headless x86 (-nographic, KVM + bridge): keep sudo/root (no display to map).
+#  - Headless (-nographic): keep sudo/root — there is no display to map, so the
+#    cross-UID Wayland problem doesn't apply. Covers the x86 image path (KVM +
+#    bridge) and the emulated Pi boot (TARGET=rpi), whose linux-rpi kernel can
+#    drive no QEMU display so it runs serial-on-stdio. The Pi boot's /dev/sda is
+#    opened snapshot=on (read-only) and root reads the raw device directly, so no
+#    per-user ACL is needed on that path.
 # Start the LAN relay before QEMU so it is already listening when the guest
 # finishes booting. socat happily listens against a guest that isn't up yet —
 # connections just fail until it is. It is detached with setsid so it survives
