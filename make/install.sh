@@ -441,12 +441,30 @@ if [ -n "$RPI" ]; then
   # config.txt — minimal and board-agnostic. arm_64bit + enable_uart are safe on
   # all boards; dtparam=pciex1 enables the PCIe link so an NVMe root works on Pi 5
   # (no-op on Pi 4). The [tryboot] section drives the Sledgehammer one-shot below.
+  #
+  # USB power: both boards current-limit the USB ports unless told otherwise, which
+  # browns out bus-powered peripherals (USB SSD/NVMe adapters, hubs, hungry sticks)
+  # — exactly the devices a from-USB install image boots off. The knob is
+  # board-specific and each is ignored by the other's firmware, so we set both under
+  # the matching [pi*] filter:
+  #   Pi 5   -> usb_max_current_enable=1 : lift the 600 mA total cap to the full
+  #             1.6 A even when the PSU doesn't advertise 5 A (5 A PSUs enable it
+  #             automatically; this forces it for third-party supplies).
+  #   Pi 4   -> max_usb_current=1        : raise the 600 mA total cap to 1.2 A.
   cat > "$FAT/config.txt" <<CFG
 # Town OS — Raspberry Pi (Pi 4/400/CM4, Pi 5/CM5). Native GPU-bootloader boot.
 arm_64bit=1
 enable_uart=1
 initramfs initramfs-linux.img followkernel
 dtparam=pciex1
+
+[pi5]
+usb_max_current_enable=1
+
+[pi4]
+max_usb_current=1
+
+[all]
 
 [tryboot]
 cmdline=cmdline_sledge.txt

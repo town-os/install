@@ -82,7 +82,9 @@ Once the VM is running, use `make vm-ip` to resolve its IP address.
 | `run`               | Auto-detect hypervisor, build image, launch VM (default target)|
 | `stop`              | Stop any tracked VMs (QEMU and/or VirtualBox)                  |
 | `image`             | Build the raw disk image (skips if up to date)                 |
+| `image TARGET=rpi`  | Build a native-boot Raspberry Pi image (Pi 4/400/CM4, Pi 5/CM5)|
 | `flash`             | Build image if stale, write to first USB storage device        |
+| `flash RPI=1`       | Flash the Raspberry Pi image (`-rpi` artifact) to USB/SD/NVMe   |
 | `run-release`       | Same as `run` but with release (`:latest`) images              |
 | `image-release`     | Build a release image (`:latest` tags)                         |
 | `qemu`              | Install deps, build image, launch QEMU in background (explicit)|
@@ -99,6 +101,52 @@ Once the VM is running, use `make vm-ip` to resolve its IP address.
 | `deps`              | Install required build dependencies via pacman (Arch Linux)     |
 | `deps-debian`       | Install required host dependencies via apt (Debian/Ubuntu)      |
 | `cleanup-loopback`  | Kill processes on loopback mounts and detach all loops          |
+
+## Raspberry Pi images
+
+Build a native-boot Raspberry Pi image (one image covers Pi 4/400/CM4 and
+Pi 5/CM5) with `TARGET=rpi`, which uses the Pi's GPU bootloader + `config.txt`
+instead of GRUB. It is aarch64-only and btrfs-only. On an aarch64 host (e.g.
+Fedora Asahi) it builds natively; on an x86_64 host it is cross-produced under
+full-system emulation (slow):
+
+```
+make image TARGET=rpi     # or: RPI=1 make image  (native aarch64 host only)
+```
+
+Flash the resulting `-rpi` image to an SD card, USB stick, or NVMe (the build
+and flash steps are user-run):
+
+```
+make flash RPI=1 USB_DEV=/dev/sdX     # or: dd the town-os-<date>-aarch64-rpi.img
+```
+
+For **Pi 5 NVMe boot**, also set the EEPROM boot order to include NVMe
+(`rpi-eeprom-config --edit` → `BOOT_ORDER=0xf416`; add `PCIE_PROBE=1` for
+non-HAT+ adapters) — `dtparam=pciex1` is already in `config.txt`.
+
+### USB power
+
+Bus-powered USB SSD/NVMe adapters, hubs, and power-hungry sticks — exactly the
+devices a from-USB install image boots off — brown out under the firmware's
+default USB current cap. The generated `config.txt` already lifts it on both
+boards, so no action is needed in the common case:
+
+- **Pi 5:** `usb_max_current_enable=1` (`[pi5]`) raises the 600 mA total cap to
+  the full ~1.6 A even when the PSU doesn't advertise 5 A.
+- **Pi 4:** `max_usb_current=1` (`[pi4]`) raises the 600 mA cap to 1.2 A.
+
+If a Pi 5 still browns out a peripheral with a genuine 5 A PSU, the firmware
+only unlocks full current when it can confirm the PSU's capability, which some
+third-party supplies don't report. Force it in the EEPROM (a **bootloader**
+setting, distinct from `config.txt`):
+
+```
+rpi-eeprom-config --edit     # add: PSU_MAX_CURRENT=5000
+```
+
+Verify on a booted Pi 5 with `vcgencmd get_config usb_max_current_enable` and
+`vcgencmd pmic_read_adc` (per-rail current).
 
 ## Image freshness
 
