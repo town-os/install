@@ -33,6 +33,34 @@ if [ -n "${USB_DEV}" ]; then
   BOOT_SRC="${USB_DEV}"
 fi
 
+# Prime sudo ONCE, up front, on the real terminal.
+#
+# Everything below that touches host state needs root: libvirt networking,
+# sysctl/ip-link on the bridge, an ACL on the raw USB device, and — on the
+# headless path — QEMU itself. Those calls are scattered, and many run inside
+# `$(sudo … 2>/dev/null)` command substitutions where sudo's password PROMPT is
+# redirected to /dev/null. With a cold credential cache the first such call
+# blocks the terminal waiting for a password nobody can see; confused retries and
+# timeouts then feed pam_faillock until the account LOCKS OUT for every session
+# and user. Validating (and caching) the timestamp here, before any redirected
+# call, means every later `sudo` hits the warm cache and never re-prompts — one
+# visible prompt instead of many invisible ones. Fail loudly rather than let the
+# blind calls hammer faillock if we can't get root.
+if ! sudo -v; then
+  echo "error: this target needs sudo (libvirt networking, device access, QEMU)." >&2
+  exit 1
+fi
+
+# From here on sudo must NEVER prompt again. We primed the credential cache just
+# above; shadow `sudo` with a wrapper that forces every later call non-interactive
+# (-n). If the cache somehow expires or auth breaks mid-run, sudo then fails
+# INSTANTLY instead of blocking on an (often /dev/null-redirected, invisible)
+# prompt and feeding pam_faillock. Under `set -e` that failure aborts the whole
+# script — which is what we want: any sudo failure stops everything rather than
+# half-configuring the host or launching a broken VM. `command sudo` avoids the
+# function recursing into itself.
+sudo() { command sudo -n "$@"; }
+
 # Generate a stable random MAC in the QEMU OUI range (52:54:00:xx:xx:xx) seeded
 # from the VM name so the same VM always gets the same MAC — and, via the DHCP
 # reservation and SLAAC below, the same IPv4 and IPv6 address every boot.
