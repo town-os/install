@@ -95,6 +95,20 @@ rm -rf $FW/*
 mv /tmp/fw-keep/* $FW/
 rmdir /tmp/fw-keep
 
+# --- Strip translation catalogs (only English is used) ---
+# glibc's runtime locale data lives in /usr/lib/locale, built by locale-gen above
+# and already limited to en_US.UTF-8. /usr/share/locale is separate: it holds every
+# package's gettext .mo message catalogs for every language, none of which the
+# installer needs. Drop all of it except English (en, en_US, en@…); locale.alias
+# and other regular files are left in place (-type d only).
+find /usr/share/locale -mindepth 1 -maxdepth 1 -type d ! -name 'en*' -exec rm -rf {} +
+
+# --- Strip documentation and man pages ---
+# This is a headless appliance driven over the network/serial installer; nobody
+# reads man pages or bundled package docs on it. Remove them wholesale (the dirs
+# are recreated empty so packages installing into them later don't fail).
+rm -rf /usr/share/man/* /usr/share/doc/* /usr/share/info/*
+
 # --- Remove build-only dependencies ---
 # Remove only known build-only packages — do NOT use -s (cascade) on base-devel
 # because it can pull out grep, sed, gawk, findutils, etc. that the runtime needs
