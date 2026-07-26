@@ -830,8 +830,22 @@ if [ "${VM_LAN}" != "0" ]; then
   if [ -z "${RESERVED_IP:-}" ]; then
     echo "warning: no reserved guest IP (custom bridge?); skipping LAN access" >&2
   else
-    GUEST_IP="${RESERVED_IP}" VM_BRIDGE="${VM_BRIDGE}" \
-      setsid "$(dirname "$0")/vm-relay.sh" &
+    # Launch the relay. In the FOREGROUND case keep it in this script's session
+    # and controlling terminal (a plain background job — NO setsid) so its own
+    # sudo calls reuse the credential we primed above: sudo's tty_tickets key the
+    # cache to the terminal, so a setsid'd relay (new session, no controlling tty)
+    # would miss that ticket and re-authenticate through an askpass helper — the
+    # second, separate password prompt. The EXIT trap below reaps it. Only the
+    # BACKGROUND (-daemonize) case needs setsid, because there qemu.sh exits while
+    # the VM lives on so the relay must outlive it (and it authenticates on its
+    # own tty-less session there; stop-qemu.sh reaps it via vm-relay.pid).
+    if [ "${FOREGROUND}" = "1" ]; then
+      GUEST_IP="${RESERVED_IP}" VM_BRIDGE="${VM_BRIDGE}" \
+        "$(dirname "$0")/vm-relay.sh" &
+    else
+      GUEST_IP="${RESERVED_IP}" VM_BRIDGE="${VM_BRIDGE}" \
+        setsid "$(dirname "$0")/vm-relay.sh" &
+    fi
     RELAY_PID=$!
     echo "${RELAY_PID}" > vm-relay.pid
     # Only tear it down here when this script owns the VM's lifetime. In the
