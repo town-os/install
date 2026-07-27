@@ -135,7 +135,7 @@ SERIAL_CONSOLE ?=
 # with the Pi flavor -> town-os-DATE-aarch64-rpi.img.
 RPI ?=
 
-.PHONY: help run run-release stop image image-release build-installer push-installer qemu qemu-fg qemu-usb \
+.PHONY: help run run-release stop image image-release compress-release build-installer push-installer qemu qemu-fg qemu-usb \
         qemu-release virtualbox virtualbox-fg virtualbox-release \
         stop-qemu stop-virtualbox vm-ip serial clean clean-images \
         cleanup-loopback deps deps-debian release flash rebuild-qemu image-container \
@@ -171,7 +171,7 @@ help:
 	@echo '  virtualbox-fg    Build if stale, launch a VirtualBox VM in the foreground'
 	@echo
 	@echo 'Flash:'
-	@echo '  flash            Build if stale, write the image to a USB device'
+	@echo '  flash            Build if stale, write the image to a USB device (USB_DEV=/dev/sdX)'
 	@echo
 	@echo 'Stop:'
 	@echo '  stop             Stop all VMs for this image/name'
@@ -187,14 +187,56 @@ help:
 	@echo '  deps             Install host dependencies on Arch or Fedora'
 	@echo '  deps-debian      Install host dependencies on Debian/Ubuntu'
 	@echo
-	@echo 'Common variables (override with VAR=value):'
-	@echo '  IMAGE=$(IMAGE)'
-	@echo '  IMAGE_SIZE=$(IMAGE_SIZE)        VM_DISK_SIZE=$(VM_DISK_SIZE)   VM_MEMORY=$(VM_MEMORY)'
-	@echo '  CONTROLLER_IMAGE=$(CONTROLLER_IMAGE)'
-	@echo '  IMAGE_HOSTNAME, LOCAL_DNS, TTYFORCE_DEV, TTYFORCE_LATEST, KEEP_MOUNT'
-	@echo '  SERIAL_CONSOLE   Set non-empty to default the image to a serial console (no keyboard)'
-	@echo '  RPI              Set non-empty to build a native Raspberry Pi image (Pi 4+; aarch64 host only)'
-	@echo '  TARGET           image/release arch: x86_64 | aarch64 | rpi (aarch64/rpi emulate on x86)'
+	@echo 'Aliases:'
+	@echo '  compress-release = image-release; run-release = run;'
+	@echo '  qemu-release = qemu; virtualbox-release = virtualbox'
+	@echo
+	@echo 'Build variables (override with VAR=value):'
+	@echo '  TARGET           Arch/flavor for every build target: x86_64 | aarch64 | rpi'
+	@echo '                   (empty = native host arch; aarch64/rpi emulate on an x86 host)'
+	@echo '  RPI              Non-empty builds a native-boot Raspberry Pi image (Pi 4/400/CM4,'
+	@echo '                   Pi 5/CM5): linux-rpi + config.txt, no GRUB. aarch64 host only —'
+	@echo '                   use TARGET=rpi to cross-build one on x86_64'
+	@echo '  SERIAL_CONSOLE   Non-empty defaults the built image to the serial-console GRUB'
+	@echo '                   entry, so it boots headless with no keyboard/monitor'
+	@echo '  IMAGE            = $(IMAGE)'
+	@echo '  IMAGE_SIZE       = $(IMAGE_SIZE)  (sparse build size; the image is shrunk afterwards)'
+	@echo '  IMAGE_HOSTNAME   Hostname and mDNS name baked into the image (default: town-os)'
+	@echo '  LOCAL_DNS        Dev DNS override (1 = auto, or a literal hostname); skips rolodex'
+	@echo '  CONTROLLER_IMAGE = $(CONTROLLER_IMAGE)'
+	@echo '                   (compose it instead with CONTROLLER_BASE / CONTROLLER_TAG;'
+	@echo '                    ROLODEX_IMAGE and UI_IMAGE follow the same arch-suffixed tag)'
+	@echo '  TTYFORCE_DEV     Non-empty installs ttyforce from git instead of crates.io'
+	@echo '  TTYFORCE_LATEST  Non-empty installs the latest crates.io ttyforce (ignores the pin)'
+	@echo '  KEEP_MOUNT       Non-empty skips the unmount after install, for debugging'
+	@echo '  LOG_DIR          = $(LOG_DIR)  (where image-log tees its transcript)'
+	@echo '  BASE_IMAGE       Arch base image for the container build path (env var)'
+	@echo '  BUILD_MIRROR     Pacman mirror for the container build; defaults to a US mirror (env var)'
+	@echo
+	@echo 'Release variables:'
+	@echo '  INSTALLER_BASE   = $(INSTALLER_BASE)'
+	@echo '  INSTALLER_TAG    = $(INSTALLER_TAG)  (push-installer also pushes a dated tag)'
+	@echo
+	@echo 'VM variables:'
+	@echo '  VM_NAME          = $(VM_NAME)'
+	@echo '  VM_BRIDGE        = $(VM_BRIDGE)'
+	@echo '  VM_MEMORY        = $(VM_MEMORY)'
+	@echo '  VM_CPUS          = $(VM_CPUS)  (QEMU'\''s default of 1 starves rolodex'\''s worker pool)'
+	@echo '  VM_DISK_SIZE     = $(VM_DISK_SIZE)  (each of the four data disks)'
+	@echo '  VM_IP            = $(VM_IP)  (libvirt DHCP reservation;'
+	@echo '                   give each concurrently-running VM its own address)'
+	@echo '  VM_NET6_PREFIX   = $(VM_NET6_PREFIX)  ULA /64 giving the guest IPv6 via SLAAC;'
+	@echo '                   empty disables. Only offered when the host itself reaches the'
+	@echo '                   v6 internet — VM_NET6_FORCE=1 skips that probe, VM_IP6'
+	@echo '                   overrides the printed guest address'
+	@echo '  VM_LAN           = $(VM_LAN)  Expose the NAT'\''d guest to the LAN so a phone on the'
+	@echo '                   same wireless network can reach it (socat TCP relays + WireGuard'
+	@echo '                   UDP DNAT). VM_LAN=0 disables; VM_RELAY_TCP overrides the port'
+	@echo '                   map (default: 5309 80 443 2222:22)'
+	@echo '  USB_DEV          Physical USB block device for flash (write) and qemu-usb (read-only boot)'
+	@echo '  USB_PHONE        Pass a live phone through to the guest: auto | vid:pid | bus.port'
+	@echo '                   (the host loses the phone, adb included, while the VM holds it)'
+	@echo '  FOREGROUND       Non-empty runs the VM in the foreground (what qemu-fg sets)'
 
 rebuild-qemu: stop clean image qemu
 
