@@ -13,6 +13,20 @@ fi
 
 echo "*** SLEDGEHAMMER: Erasing all permanent storage ***"
 
+# Make the sledgehammer boot ONE-SHOT on the U-Boot/extlinux images (Anbernic
+# RG35XX): there is no GRUB there, so the trigger selects this boot by pointing
+# extlinux.conf's DEFAULT at the sledgehammer label (see the grub-reboot shim
+# written by make/install.sh). Reset it now — before the wipe and the reboot at
+# the end of this script — so the machine comes back on the normal entry instead
+# of wiping itself again on every boot. A no-op on GRUB/Pi images, where the
+# one-shot is handled by grubenv / the firmware's tryboot.
+EXTLINUX=/boot/efi/extlinux/extlinux.conf
+if [ -f "$EXTLINUX" ]; then
+  echo "Resetting $EXTLINUX to the default boot entry"
+  sed -i 's/^DEFAULT .*/DEFAULT townos/' "$EXTLINUX" || true
+  sync
+fi
+
 # Determine which device holds the boot filesystem so we don't wipe it
 boot_dev=""
 for mp in /boot /sysroot /; do

@@ -100,7 +100,7 @@ Once the VM is running, use `make vm-ip` to resolve its IP address.
 ## Targets
 
 `make` with no target prints this list. Every build/run target accepts
-`TARGET=x86_64|aarch64|rpi` to pick the image architecture/flavor.
+`TARGET=x86_64|aarch64|rpi|rg35xxpro` to pick the image architecture/flavor.
 
 | Target              | Description                                                    |
 |---------------------|----------------------------------------------------------------|
@@ -109,6 +109,7 @@ Once the VM is running, use `make vm-ip` to resolve its IP address.
 | `stop`              | Stop any tracked VMs (QEMU and/or VirtualBox)                  |
 | `image`             | Build the raw disk image (skips if up to date)                 |
 | `image TARGET=rpi`  | Build a native-boot Raspberry Pi image (Pi 4/400/CM4, Pi 5/CM5)|
+| `image TARGET=rg35xxpro` | Build an SD image for the Anbernic RG35XX Pro (Allwinner H700) |
 | `image-log`         | Same as `image`, tee'd into a timestamped log under `LOG_DIR`   |
 | `image-container`   | Force the same-arch Arch container build path (native only)     |
 | `flash`             | Build image if stale, write to USB (`USB_DEV=/dev/sdX`)         |
@@ -179,6 +180,164 @@ rpi-eeprom-config --edit     # add: PSU_MAX_CURRENT=5000
 Verify on a booted Pi 5 with `vcgencmd get_config usb_max_current_enable` and
 `vcgencmd pmic_read_adc` (per-rail current).
 
+## Anbernic RG35XX Pro images
+
+Build an SD-card image for the Anbernic RG35XX Pro — and the rest of the
+Allwinner H700 handheld family (RG35XX Plus/H/SP/2024) — with
+`TARGET=rg35xxpro`. It is aarch64-only and btrfs-only. On an aarch64 host it
+builds natively; on x86_64 it is cross-produced under full-system emulation
+(slow), same as `TARGET=rpi`:
+
+```
+make image TARGET=rg35xxpro
+make flash TARGET=rg35xxpro USB_DEV=/dev/sdX   # or dd the -rg35xxpro image
+```
+
+Write it to the card in the **TF1 slot** — the RG35XX Pro has no internal
+storage, and TF1 is the only slot the SoC boots from. TF2 is not a boot device.
+
+### How it boots
+
+Nothing on an Allwinner box boots the image for you: there is no UEFI and no
+GPU bootloader, just a BootROM that reads a bootloader out of the card's raw
+sectors. So this image **carries its own bootloader**, and the build compiles it:
+
+- **U-Boot + TF-A are built during the image build** (`scripts/build-uboot-rg35xx.sh`,
+  inside the chroot, from mainline `anbernic_rg35xx_h700_defconfig` and TF-A
+  `PLAT=sun50i_h616`). No distro packages a bootloader for this board. Skip the
+  build with `UBOOT_BIN=/path/to/u-boot-sunxi-with-spl.bin`.
+- The bootloader is written at **128 KiB** (sector 256), not the traditional
+  8 KiB. Every ARM64 Allwinner SoC checks both, and only 128 KiB clears the GPT
+  partition table — so this image keeps the same GPT 3-partition layout as every
+  other target instead of falling back to MBR the way most sunxi images do.
+- U-Boot then reads `/extlinux/extlinux.conf` from the FAT partition and loads
+  `Image` + `initramfs-linux.img` + the DTB. From the kernel onward everything is
+  identical to the other targets.
+- The kernel is the stock ALARM `linux-aarch64` — it already carries the sunxi
+  platform, the H700 clocks, `MMC_SUNXI`, the AXP717 PMIC and the board's
+  RTL8821CS SDIO WiFi driver, and it ships the Allwinner DTBs.
+
+### Everything happens on the screen
+
+`make image TARGET=rg35xxpro` — no other variables — produces an image whose
+console is the handheld's own LCD. Kernel messages, the installer and the login
+prompt all appear there, and the device's own buttons drive them. **There is no
+serial console in this image at all**, so nothing has to be soldered to or
+plugged in to set the machine up.
+
+Two things were needed for that:
+
+- **A patched kernel**, because mainline cannot light this panel. It has the
+  DE33 mixer and nothing else — no H616 display-engine compatible, no LCD timing
+  controller, and `sun50i-h616.dtsi` has no display nodes at all. That work was
+  posted upstream in July 2025 and never landed. The build applies the **GPL H700
+  patch set ROCKNIX maintains**, pinned by commit, on top of a pinned upstream
+  kernel: display engine, TCON, the generic MIPI-DPI/SPI panel driver, the PWM
+  driver and backlight, and USB OTG host mode.
+- **The buttons drive it as a gamepad.** ttyforce (>= 0.5.1) reads the pad
+  through gilrs/evdev: the D-pad navigates, **Start raises an on-screen
+  keyboard**, the face buttons type on it, L2 shifts, L1/R1 change page. So the
+  device tree keeps the stock `BTN_*` gamepad codes — remapping them to keyboard
+  keys would hide the pad from gilrs and the OSK could never be raised. **No USB
+  keyboard is needed, for text entry or anything else.**
+
+Our device tree changes exactly two things about the controls:
+
+- **A and B are swapped** relative to the kernel's position-based naming, so the
+  button printed **A** accepts and **B** goes back, as the labels suggest.
+- **Menu emits `KEY_A`.** ttyforce's status getty blanks the screen after five
+  minutes and only watches input devices that advertise `KEY_A`, so a pure
+  gamepad cannot wake it — the panel would go dark with no way to bring it back.
+  One `KEY_A` qualifies the device and every button then counts as activity.
+  `BTN_MODE` is unused by ttyforce, so Menu is the button to spend; it types an
+  "a" if a text field has focus. (The tidier fix is upstream: the getty does not
+  yet understand the gamepad that the installer does.)
+
+The build **fails if the installed ttyforce is older than 0.5.1** — without the
+on-screen keyboard this board cannot be provisioned at all.
+
+**The first build takes hours** — it is a full kernel build, and on an x86 host
+it runs under emulation. It is cached in `.kernel-cache/` keyed on the pinned
+inputs, so later builds reuse it in seconds. Build on an aarch64 host if you can.
+
+### DRAM type: check this before flashing
+
+H700 handhelds shipped with **both LPDDR3 and LPDDR4**, and the bootloader's
+memory timings are compiled in — the wrong ones mean the board shows no sign of
+life at power-on. Both bootloaders are built and staged on the boot partition;
+`RG35XX_DRAM` (default `lpddr4`) picks which is written to the card's raw
+sectors. If a flashed card appears dead, write the other one:
+
+```
+sudo dd if=/mnt/boot/u-boot-sunxi-with-spl-lpddr3.bin of=/dev/sdX \
+     bs=1k seek=128 conv=notrunc
+```
+
+### Input and WiFi
+
+Both are in the initrd, and the build fails if they aren't:
+
+- **Controls:** every button on the board is a device-tree `gpio-keys` line, so
+  `gpio_keys` is built into the patched kernel (and bundled into the initrd on
+  the stock one) — without it the handheld has no input at all. `joydev` plus `xpad`/`hid_*` (Sony,
+  PlayStation, Nintendo, Steam, Microsoft, Logitech) cover USB gamepads on every
+  image. The **analog sticks do not work**: they need the SoC GPADC, and
+  `CONFIG_SUN20I_GPADC`/`CONFIG_JOYSTICK_ADC` are unset in the ALARM kernel.
+  Buttons also emit `BTN_*` codes, which the console does not turn into
+  keystrokes — they are for `evdev` consumers, not for driving a TUI on `tty0`.
+- **WiFi:** the onboard Realtek RTL8821CS (SDIO) is supported by mainline
+  `rtw88_8821cs`; it and `rtw88/rtw8821c_fw.bin` are bundled, along with
+  `rfkill`. `configure.sh` verifies the generated initrd actually contains them
+  (`verify_initrd`) and fails the build listing whatever is missing.
+- Firmware retention at *runtime* is now derived from the module list itself:
+  the `linux-firmware` trim keeps every file declared by a bundled module
+  (`modinfo -F firmware`), on top of the curated directory list.
+
+### Device tree
+
+Mainline has **no `rg35xx-pro` device tree** — only `-2024`, `-plus`, `-h` and
+`-sp` — so this repo carries one at `dts/sun50i-h700-anbernic-rg35xx-pro.dts`,
+compiled by the kernel build. It derives from `-plus`, the same base ROCKNIX
+uses for the Pro, and inherits the display from the patch set. The analog sticks
+are not described (they need a GPADC driver mainline does not build). All family
+DTBs are staged on the FAT partition, so the choice can be changed by editing
+`extlinux.conf` on the card — or at build time:
+
+```
+make image TARGET=rg35xxpro RG35XX_DTB=sun50i-h700-anbernic-rg35xx-h.dtb  # 2nd USB port
+make image TARGET=rg35xxpro RG35XX_DTB=/path/to/a/custom.dtb
+```
+
+### Persistent storage
+
+Town OS wants a disk separate from the boot media, and on this box that means
+**USB**: mainline does not enable the second card slot (TF2) on any RG35XX device
+tree, so only the boot card and USB devices appear. The same USB port is also how
+the machine gets a network — the only onboard NIC is SDIO WiFi, and there is no
+Ethernet — so a USB-C hub with Ethernet plus storage is the practical setup. USB
+Ethernet drivers (`r8152`, `asix`, `ax88179_178a`, CDC) are in the initrd.
+
+### Unverified on hardware
+
+Like the Pi target, this path is correct-by-construction from the U-Boot/mainline
+documentation but has not been booted on a real device. The likely places to
+iterate are the U-Boot version pin, the initrd module set, and the device-tree
+choice. Smoke-test the userspace half without hardware (this direct-kernel-boots
+the staged kernel under QEMU `virt`; it exercises the initrd, ttyforce and the
+squashfs root, but not U-Boot or any H700 driver):
+
+```
+make qemu-usb TARGET=rg35xxpro USB_DEV=/dev/sdX
+```
+
+**A game controller plugged into the host is passed through to that guest**, so
+the gamepad-driven installer — and its on-screen keyboard — can actually be
+driven in the emulator. `qemu.sh` picks the pad by udev's `ID_INPUT_JOYSTICK`
+classification and forwards the raw evdev node (`virtio-input-host-pci`), so the
+guest sees the same `BTN_*` events the handheld produces. **The host cannot use
+the controller while the VM is running.** Force a specific device with
+`GAMEPAD=/dev/input/eventN`, or turn it off with `GAMEPAD=0`.
+
 ## Image freshness
 
 The image is rebuilt automatically when any source file changes (scripts, systemd
@@ -192,8 +351,11 @@ Override on the command line, e.g. `make qemu VM_MEMORY=8G`.
 
 | Variable           | Default                          | Description                              |
 |--------------------|----------------------------------|------------------------------------------|
-| `TARGET`           | *(empty)*                        | Image arch/flavor: `x86_64`, `aarch64`, or `rpi`. Empty = native host arch |
-| `IMAGE`            | `town-os-<date>-<arch>[-rpi].img`| Output image filename                    |
+| `TARGET`           | *(empty)*                        | Image arch/flavor: `x86_64`, `aarch64`, `rpi`, or `rg35xxpro`. Empty = native host arch |
+| `IMAGE`            | `town-os-<date>-<arch>[-flavor].img`| Output image filename                 |
+| `RG35XX_DTB`       | `sun50i-h700-anbernic-rg35xx-pro.dtb` | Device tree for the RG35XX image (name or absolute path) |
+| `RG35XX_DRAM`      | `lpddr4`                         | DRAM type of the target unit; `lpddr3` for older units |
+| `UBOOT_BIN`        | *(empty)*                        | Prebuilt `u-boot-sunxi-with-spl.bin` to use instead of building one |
 | `IMAGE_SIZE`       | `12G`                            | Size of the raw disk image               |
 | `LOG_DIR`          | `/tmp/town-os-install/log`       | Where `image-log` writes its build transcript |
 | `CONTROLLER_BASE`  | `quay.io/town/town`              | Controller image repository (no tag)      |
@@ -210,6 +372,7 @@ Override on the command line, e.g. `make qemu VM_MEMORY=8G`.
 | `VM_IP`            | `192.168.122.50`                 | IP pinned for the VM via a libvirt DHCP reservation. Give each concurrent VM its own |
 | `VM_NET6_PREFIX`   | `fd00:c0a8:7a`                   | IPv6 ULA /64 offered to the guest via SLAAC (only when the host has working IPv6). Empty disables |
 | `VM_LAN`           | `1`                              | Expose the NAT'd VM to the LAN so a phone can reach it. `0` disables |
+| `GAMEPAD`          | `auto`                           | Controller passed to a `qemu-usb` guest; auto-detected for RG35XX, else a `/dev/input/eventN` path. `0` disables |
 | `USB_DEV`          | *(empty)*                        | USB block device for `flash` (write) and `qemu-usb` (boot read-only) |
 | `USB_PHONE`        | *(empty)*                        | Pass a live phone through to the guest: `auto`, `vid:pid`, or `bus.port` |
 | `SERIAL_CONSOLE`   | *(empty)*                        | Build an image whose GRUB defaults to the serial console (no keyboard/monitor needed) |

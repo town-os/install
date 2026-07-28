@@ -134,13 +134,15 @@ modprobe loop 2>/dev/null || true
 modprobe ext4 2>/dev/null || true
 modprobe btrfs 2>/dev/null || true
 
-say "Running install.sh ${IMAGE_SIZE} ${IMAGE} (RPI='${RPI}')"
+say "Running install.sh ${IMAGE_SIZE} ${IMAGE} (RPI='${RPI}' RG35XX='${RG35XX:-}')"
 if env \
      CONTROLLER_IMAGE="${CONTROLLER_IMAGE}" ROLODEX_IMAGE="${ROLODEX_IMAGE}" \
      UI_IMAGE="${UI_IMAGE}" LOCAL_DNS="${LOCAL_DNS}" \
      TTYFORCE_DEV="${TTYFORCE_DEV}" TTYFORCE_LATEST="${TTYFORCE_LATEST}" \
      IMAGE_HOSTNAME="${IMAGE_HOSTNAME}" SERIAL_CONSOLE="${SERIAL_CONSOLE}" \
-     RPI="${RPI}" \
+     RPI="${RPI}" RG35XX="${RG35XX:-}" RG35XX_DTB="${RG35XX_DTB:-}" \
+     UBOOT_BIN="${UBOOT_BIN:-}" \
+     RG35XX_DRAM="${RG35XX_DRAM:-}" \
      ./make/install.sh "${IMAGE_SIZE}" "${IMAGE}" 2>&1 | to_console
 then
   # --- 4. Export the finished image to the host over 9p. ----------------------

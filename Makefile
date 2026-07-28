@@ -10,7 +10,10 @@ HOST_ARCH        := $(shell uname -m)
 #   x86_64 (x86/amd64) native UEFI/GRUB PC image
 #   aarch64 (arm64)    aarch64 UEFI/GRUB image — generic Linux / Apple-Silicon VM
 #   rpi                aarch64 native-boot Raspberry Pi image (Pi 4/400/CM4, Pi 5/CM5)
-# On an x86_64 host the aarch64/rpi targets are produced via full-system emulation
+#   rg35xxpro          aarch64 SD-card image for the Anbernic RG35XX Pro and the
+#                      rest of the Allwinner H700 handheld family (U-Boot in raw
+#                      sectors + extlinux; no UEFI, no GRUB)
+# On an x86_64 host the aarch64/rpi/rg35xxpro targets are produced via full-system emulation
 # (make/image-aarch64.sh — a whole emulated aarch64 MACHINE, NOT binfmt/qemu-user
 # and NOT cross-compilation, so "image arch == build-host arch" still holds; the
 # build host is simply virtual). An x86_64 target on a non-x86_64 host is rejected
@@ -29,8 +32,11 @@ BUILD_ARCH := aarch64
 else ifeq ($(TARGET),rpi)
 BUILD_ARCH := aarch64
 RPI := 1
+else ifneq ($(filter rg35xxpro rg35xx-pro rg35xx anbernic,$(TARGET)),)
+BUILD_ARCH := aarch64
+RG35XX := 1
 else
-$(error unknown TARGET '$(TARGET)' — expected one of: x86_64, aarch64, rpi)
+$(error unknown TARGET '$(TARGET)' — expected one of: x86_64, aarch64, rpi, rg35xxpro)
 endif
 
 # EMULATE is set when the requested arch differs from the host arch: the image is
@@ -52,11 +58,13 @@ endif
 # "IMAGE_SIZE IMAGE" signature and honor the same env vars.
 IMAGE_BUILDER := $(if $(EMULATE),make/image-aarch64.sh,make/image.sh)
 
-# RPI=1 produces a fundamentally different (native-boot Raspberry Pi) image, so
-# give it a distinct filename: it is a SEPARATE make target/artifact that coexists
-# with the normal UEFI/GRUB image instead of clobbering it. `make image` ->
-# town-os-DATE-ARCH.img; `make image RPI=1` -> town-os-DATE-ARCH-rpi.img.
-IMAGE            ?= town-os-$(BUILD_DATE)-$(BUILD_ARCH)$(if $(RPI),-rpi).img
+# RPI=1 and RG35XX=1 each produce a fundamentally different (native-boot) image,
+# so each gets a distinct filename: they are SEPARATE make targets/artifacts that
+# coexist with the normal UEFI/GRUB image instead of clobbering it. `make image`
+# -> town-os-DATE-ARCH.img; `make image RPI=1` -> town-os-DATE-ARCH-rpi.img;
+# `make image TARGET=rg35xxpro` -> town-os-DATE-aarch64-rg35xxpro.img.
+IMAGE_FLAVOR     := $(if $(RPI),-rpi)$(if $(RG35XX),-rg35xxpro)
+IMAGE            ?= town-os-$(BUILD_DATE)-$(BUILD_ARCH)$(IMAGE_FLAVOR).img
 IMAGE_SIZE       ?= 12G
 # Where the *-log build targets tee their transcript. A build always leaves a
 # full log here even when it fails (the recipe captures the exit code through
@@ -73,11 +81,12 @@ UI_IMAGE         ?= quay.io/town/ui:rc.latest-$(BUILD_ARCH)
 # The installer image carries the compressed USB image (town-os.img.bz2) for the
 # website's curl|bash installer. Same arch-suffixed tag scheme as the others:
 # `make push-installer` publishes release-$(arch) (rolling) plus a dated tag.
-# RPI=1 publishes to a SEPARATE tag (release-$(arch)-rpi) so the Raspberry Pi
-# installer image never clobbers the PC one — matching the distinct -rpi image
-# filename. The website installer pulls the -rpi tag when given RPI=1.
+# Each native-boot flavor publishes to a SEPARATE tag (release-$(arch)-rpi,
+# release-$(arch)-rg35xxpro) so it never clobbers the PC one — matching the
+# distinct image filename. The website installer pulls the -rpi tag when given
+# RPI=1.
 INSTALLER_BASE   ?= quay.io/town/installer
-INSTALLER_TAG    ?= release-$(BUILD_ARCH)$(if $(RPI),-rpi)
+INSTALLER_TAG    ?= release-$(BUILD_ARCH)$(IMAGE_FLAVOR)
 VM_DISK_SIZE ?= $(shell grep '^vm_disk_size:' town-os.yaml \
                   | awk '{ print $$2 }' | tr -d '"' | tr -d "'" \
                   || echo 50G)
@@ -121,6 +130,12 @@ USB_DEV     ?=
 # it). Enable USB tethering on the phone and the box gets a direct network link
 # to it -- no libvirt NAT in the path.
 USB_PHONE   ?=
+# Pass a real game controller through to the guest for `make qemu-usb`. The
+# RG35XX installer is gamepad-driven (its on-screen keyboard is the only way to
+# type on that device), so an RG35XX guest auto-detects one; other targets only
+# use a pad if given an explicit /dev/input/eventN. GAMEPAD=0 disables. The host
+# loses the controller while the VM holds it.
+GAMEPAD     ?=
 # When non-empty, the built image's GRUB defaults to the serial-console entry
 # (console=ttyS0,115200) so the machine boots headless with no keyboard/monitor.
 SERIAL_CONSOLE ?=
@@ -135,6 +150,25 @@ SERIAL_CONSOLE ?=
 # with the Pi flavor -> town-os-DATE-aarch64-rpi.img.
 RPI ?=
 
+# RG35XX=1 (what TARGET=rg35xxpro sets) builds the Anbernic RG35XX Pro SD image:
+# an Allwinner H700 box has no onboard firmware, so the image carries a
+# bootloader — mainline U-Boot + TF-A, compiled during the build and written into
+# the card's raw sectors — and boots via extlinux instead of UEFI/GRUB. Like
+# RPI=1 it is aarch64-only and btrfs-only, and gives the image a distinct
+# -rg35xxpro filename. Bare RG35XX=1 builds natively (aarch64 host only); use
+# TARGET=rg35xxpro to cross-build one on x86_64 (emulated, like TARGET=rpi).
+RG35XX ?=
+# Device tree for the RG35XX build. Mainline has no rg35xx-pro DT; the -h DT is
+# the closest superset (see make/install.sh). Any of the four staged H700 DTBs
+# works here, as does an absolute path to a .dtb from another distro.
+RG35XX_DTB ?=
+# Skip the in-chroot U-Boot build and use this prebuilt u-boot-sunxi-with-spl.bin.
+UBOOT_BIN ?=
+# DRAM type of the target unit: lpddr4 (default) or lpddr3. H700 handhelds
+# shipped with both; the wrong one means the board never powers up. Both
+# bootloaders are staged on the card so the other can be written by hand.
+RG35XX_DRAM ?=
+
 .PHONY: help run run-release stop image image-release compress-release build-installer push-installer qemu qemu-fg qemu-usb \
         qemu-release virtualbox virtualbox-fg virtualbox-release \
         stop-qemu stop-virtualbox vm-ip serial clean clean-images \
@@ -146,21 +180,22 @@ help:
 	@echo
 	@echo 'Build:'
 	@echo '  image            Build the disk image for TARGET (default: native host arch)'
-	@echo '                   TARGET=x86_64|aarch64|rpi; aarch64/rpi emulate on an x86 host'
+	@echo '                   TARGET=x86_64|aarch64|rpi|rg35xxpro; non-x86 targets emulate'
+	@echo '                   on an x86 host'
 	@echo '  image-log        Same as image, tee'\''d into a timestamped log under $(LOG_DIR)'
 	@echo '  image-container  Force the same-arch Arch container build path (native only)'
 	@echo '  image-release    Build the image and compress it to .bz2'
 	@echo '  build-installer  Build the installer OCI image from town-os.img.bz2 (no push)'
 	@echo '  push-installer   Build then push the installer image (release-$(BUILD_ARCH) + dated tag)'
 	@echo '  release          Build, compress, and push the installer image'
-	@echo '                   TARGET=x86_64|aarch64|rpi picks the arch/flavor'
-	@echo '                   (aarch64/rpi cross-build via emulation on an x86 host)'
+	@echo '                   TARGET=x86_64|aarch64|rpi|rg35xxpro picks the arch/flavor'
+	@echo '                   (non-x86 targets cross-build via emulation on an x86 host)'
 	@echo
 	@echo 'Run (QEMU):'
 	@echo '  qemu             Build if stale, launch QEMU in the background'
 	@echo '  qemu-fg          Build if stale, launch QEMU in the foreground (serial attached)'
 	@echo '  qemu-usb         Launch QEMU in the foreground from a physical USB (USB_DEV=/dev/sdX); no build'
-	@echo '                   TARGET=aarch64|rpi emulates a foreign-arch stick on an x86 host'
+	@echo '                   TARGET=aarch64|rpi|rg35xxpro emulates a foreign-arch stick on x86'
 	@echo '  run              Build if stale, launch a libvirt-managed VM'
 	@echo '  rebuild-qemu     stop + clean + image + qemu'
 	@echo '  serial           Attach to a running QEMU serial console (Ctrl-] to detach)'
@@ -192,11 +227,20 @@ help:
 	@echo '  qemu-release = qemu; virtualbox-release = virtualbox'
 	@echo
 	@echo 'Build variables (override with VAR=value):'
-	@echo '  TARGET           Arch/flavor for every build target: x86_64 | aarch64 | rpi'
-	@echo '                   (empty = native host arch; aarch64/rpi emulate on an x86 host)'
+	@echo '  TARGET           Arch/flavor for every build target:'
+	@echo '                   x86_64 | aarch64 | rpi | rg35xxpro'
+	@echo '                   (empty = native host arch; non-x86 emulate on an x86 host)'
 	@echo '  RPI              Non-empty builds a native-boot Raspberry Pi image (Pi 4/400/CM4,'
 	@echo '                   Pi 5/CM5): linux-rpi + config.txt, no GRUB. aarch64 host only —'
 	@echo '                   use TARGET=rpi to cross-build one on x86_64'
+	@echo '  RG35XX           Non-empty builds an Anbernic RG35XX Pro (Allwinner H700) SD'
+	@echo '                   image: U-Boot built into the raw sectors + extlinux, no GRUB.'
+	@echo '                   aarch64 host only — use TARGET=rg35xxpro to cross-build on x86'
+	@echo '  RG35XX_DTB       Device tree for the RG35XX image (default: the Pro DT this'
+	@echo '                   repo carries in dts/). A .dtb name or an absolute path'
+	@echo '  RG35XX_DRAM      lpddr4 (default) or lpddr3 — must match the unit'
+	@echo '  UBOOT_BIN        Use this prebuilt u-boot-sunxi-with-spl.bin instead of building'
+	@echo '                   U-Boot during the image build'
 	@echo '  SERIAL_CONSOLE   Non-empty defaults the built image to the serial-console GRUB'
 	@echo '                   entry, so it boots headless with no keyboard/monitor'
 	@echo '  IMAGE            = $(IMAGE)'
@@ -234,6 +278,8 @@ help:
 	@echo '                   UDP DNAT). VM_LAN=0 disables; VM_RELAY_TCP overrides the port'
 	@echo '                   map (default: 5309 80 443 2222:22)'
 	@echo '  USB_DEV          Physical USB block device for flash (write) and qemu-usb (read-only boot)'
+	@echo '  GAMEPAD          Game controller for qemu-usb: auto (RG35XX only) | /dev/input/eventN'
+	@echo '                   | 0. The host loses the pad while the VM holds it'
 	@echo '  USB_PHONE        Pass a live phone through to the guest: auto | vid:pid | bus.port'
 	@echo '                   (the host loses the phone, adb included, while the VM holds it)'
 	@echo '  FOREGROUND       Non-empty runs the VM in the foreground (what qemu-fg sets)'
@@ -246,6 +292,7 @@ run: stop $(IMAGE)
 	  ${PWD}/make/run.sh $(IMAGE)
 
 IMAGE_SOURCES := $(wildcard make/install.sh make/image-container.sh make/Containerfile.build \
+                           dts/*.dts \
                            make/image-aarch64.sh make/image-aarch64-guest.sh \
                            scripts/*.sh systemd/*.service systemd/*.timer \
                            initcpio/hooks/* initcpio/install/* town-os.yaml Makefile)
@@ -264,6 +311,10 @@ FORCE:
 	  'LOCAL_DNS=$(LOCAL_DNS)' \
 	  'SERIAL_CONSOLE=$(SERIAL_CONSOLE)' \
 	  'RPI=$(RPI)' \
+	  'RG35XX=$(RG35XX)' \
+	  'RG35XX_DTB=$(RG35XX_DTB)' \
+	  'RG35XX_DRAM=$(RG35XX_DRAM)' \
+	  'UBOOT_BIN=$(UBOOT_BIN)' \
 	  'IMAGE_SIZE=$(IMAGE_SIZE)' | cmp -s - $@ || \
 	printf '%s\n' \
 	  'CONTROLLER_IMAGE=$(CONTROLLER_IMAGE)' \
@@ -275,6 +326,10 @@ FORCE:
 	  'LOCAL_DNS=$(LOCAL_DNS)' \
 	  'SERIAL_CONSOLE=$(SERIAL_CONSOLE)' \
 	  'RPI=$(RPI)' \
+	  'RG35XX=$(RG35XX)' \
+	  'RG35XX_DTB=$(RG35XX_DTB)' \
+	  'RG35XX_DRAM=$(RG35XX_DRAM)' \
+	  'UBOOT_BIN=$(UBOOT_BIN)' \
 	  'IMAGE_SIZE=$(IMAGE_SIZE)' > $@
 
 # Uses $(IMAGE_BUILDER): the native builder (make/image.sh) normally, or the
@@ -282,7 +337,7 @@ FORCE:
 # arch the host can't build natively (EMULATE=1). Both take the same
 # "IMAGE_SIZE IMAGE" signature and honor the same env vars.
 $(IMAGE): $(IMAGE_SOURCES) .build-config
-	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) TTYFORCE_DEV=$(TTYFORCE_DEV) TTYFORCE_LATEST=$(TTYFORCE_LATEST) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) SERIAL_CONSOLE=$(SERIAL_CONSOLE) RPI=$(RPI) ${PWD}/$(IMAGE_BUILDER) $(IMAGE_SIZE) $(IMAGE)
+	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) TTYFORCE_DEV=$(TTYFORCE_DEV) TTYFORCE_LATEST=$(TTYFORCE_LATEST) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) SERIAL_CONSOLE=$(SERIAL_CONSOLE) RPI=$(RPI) RG35XX=$(RG35XX) RG35XX_DTB=$(RG35XX_DTB) RG35XX_DRAM=$(RG35XX_DRAM) UBOOT_BIN=$(UBOOT_BIN) ${PWD}/$(IMAGE_BUILDER) $(IMAGE_SIZE) $(IMAGE)
 
 # Build the disk image for TARGET (default: native host arch). TARGET=aarch64 or
 # TARGET=rpi on an x86_64 host build via full-system emulation automatically.
@@ -302,7 +357,7 @@ image-log:
 # TARGET — for that use `make image TARGET=aarch64|rpi`, which emulates.
 image-container: $(IMAGE_SOURCES) .build-config
 	@[ -z "$(EMULATE)" ] || { echo 'image-container: cannot build a $(BUILD_ARCH) image on a $(HOST_ARCH) host via the container path (native-only); use `make image TARGET=$(TARGET)` for the emulated build'; exit 1; }
-	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) TTYFORCE_DEV=$(TTYFORCE_DEV) TTYFORCE_LATEST=$(TTYFORCE_LATEST) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) SERIAL_CONSOLE=$(SERIAL_CONSOLE) RPI=$(RPI) ${PWD}/make/image-container.sh $(IMAGE_SIZE) $(IMAGE)
+	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) TTYFORCE_DEV=$(TTYFORCE_DEV) TTYFORCE_LATEST=$(TTYFORCE_LATEST) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) SERIAL_CONSOLE=$(SERIAL_CONSOLE) RPI=$(RPI) RG35XX=$(RG35XX) RG35XX_DTB=$(RG35XX_DTB) RG35XX_DRAM=$(RG35XX_DRAM) UBOOT_BIN=$(UBOOT_BIN) ${PWD}/make/image-container.sh $(IMAGE_SIZE) $(IMAGE)
 
 # Compressed release image, as a real file target so it is NOT rebuilt when the
 # .bz2 is already fresh. It depends on the image's *sources* rather than on
@@ -363,7 +418,7 @@ qemu-fg: $(IMAGE)
 #   make qemu-usb TARGET=aarch64 USB_DEV=/dev/sda
 qemu-usb:
 	@[ -n "$(USB_DEV)" ] || { echo 'error: set USB_DEV=/dev/sdX (the USB block device to boot)'; exit 1; }
-	FOREGROUND=1 USB_DEV=$(USB_DEV) QEMU_ARCH=$(BUILD_ARCH) RPI=$(RPI) VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_CPUS=$(VM_CPUS) VM_BRIDGE=$(VM_BRIDGE) \
+	FOREGROUND=1 USB_DEV=$(USB_DEV) QEMU_ARCH=$(BUILD_ARCH) RPI=$(RPI) RG35XX=$(RG35XX) GAMEPAD=$(GAMEPAD) VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_CPUS=$(VM_CPUS) VM_BRIDGE=$(VM_BRIDGE) \
 	  VM_NAME=$(VM_NAME) VM_IP=$(VM_IP) USB_PHONE=$(USB_PHONE) VM_NET6_PREFIX=$(VM_NET6_PREFIX) VM_IP6=$(VM_IP6) ${PWD}/make/qemu.sh $(USB_DEV)
 
 stop:

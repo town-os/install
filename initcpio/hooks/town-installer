@@ -48,6 +48,51 @@ nameserver 1.1.1.1
 RESOLV
 }
 
+# Wait (bounded) for a path to appear. Returns 1 on timeout; callers log and
+# carry on rather than hanging the boot forever on missing hardware.
+_wait_for_path() {
+    _path="$1"; _secs="$2"
+    _i=0
+    # Whole-second steps: the initrd's busybox `sleep` cannot be relied on to
+    # accept a fractional argument. The path is tested BEFORE the first sleep, so
+    # hardware that is already up costs nothing.
+    while [ ! -e "$_path" ]; do
+        _i=$((_i + 1))
+        [ "$_i" -gt "$_secs" ] && return 1
+        sleep 1
+    done
+    return 0
+}
+
+# Wait for the LOCAL console hardware when the installer is going to run on a
+# virtual terminal rather than a serial line — i.e. when the machine's own screen
+# and buttons are the only interface (the Anbernic RG35XX boots exactly this way:
+# console=tty0, no serial console at all).
+#
+# `udevadm settle` above is not enough for either half. It waits for the events
+# already queued, but a DRM panel that returns -EPROBE_DEFER — which is the norm
+# for this board, where the panel needs its regulators, the SPI init bus and the
+# PWM backlight to come up first — is retried AFTER settle returns. Launching
+# ttyforce in that window gives it a tty0 with no framebuffer: it draws into
+# nothing and exits, and the boot ends with an unprovisioned machine in front of
+# a user staring at a black screen.
+#
+# The same applies to input: ttyforce enumerates gamepads through gilrs once at
+# startup, so a pad whose evdev node has not appeared yet is simply not there.
+wait_for_local_console() {
+    if ! _wait_for_path /sys/class/graphics/fb0 15; then
+        echo "town-installer: no framebuffer after 15s — the installer may have nothing to draw on" > /dev/kmsg
+    else
+        echo "town-installer: framebuffer ready" > /dev/kmsg
+    fi
+
+    # Any event node will do; we only need udev to have created the input
+    # devices before gilrs/evdev enumerate them.
+    if ! _wait_for_path /dev/input/event0 5; then
+        echo "town-installer: no input devices after 5s — buttons/keyboard may not work" > /dev/kmsg
+    fi
+}
+
 run_hook() {
     # Wait for udev to finish discovering all block devices
     msg ":: town-installer: waiting for udev..."
@@ -76,6 +121,13 @@ run_hook() {
     if [ -n "$last_console" ] && [ -e "/dev/$last_console" ]; then
         TTY_ARGS="--tty /dev/$last_console"
     fi
+
+    # A virtual terminal means the local screen and local input are the
+    # interface, so wait for both to exist before handing over (see above). A
+    # serial console needs neither.
+    case "$last_console" in
+        tty[0-9]*) wait_for_local_console ;;
+    esac
 
     /usr/bin/ttyforce initrd --etc-prefix /town-os/etc/overlays/root --ssh-user root,status $TTY_ARGS
     echo "town-installer: ttyforce exited with code $?" > /dev/kmsg

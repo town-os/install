@@ -13,6 +13,14 @@ export TTYFORCE_LATEST="${TTYFORCE_LATEST:-}"
 export IMAGE_HOSTNAME="${IMAGE_HOSTNAME:-}"
 export SERIAL_CONSOLE="${SERIAL_CONSOLE:-}"
 export RPI="${RPI:-}"
+# Anbernic RG35XX Pro (Allwinner H700) SD image: U-Boot in the raw sectors +
+# extlinux instead of UEFI/GRUB. RG35XX_DTB picks the device tree, UBOOT_BIN
+# supplies a prebuilt bootloader instead of building one (paths are resolved by
+# install.sh with the repo as cwd, so keep them repo-relative or absolute).
+export RG35XX="${RG35XX:-}"
+export RG35XX_DTB="${RG35XX_DTB:-}"
+export UBOOT_BIN="${UBOOT_BIN:-}"
+export RG35XX_DRAM="${RG35XX_DRAM:-}"
 
 # install.sh needs Arch-only tools (pacstrap, arch-chroot, genfstab, mkinitcpio).
 # On Arch hosts, build natively. On any other host, build inside a same-arch Arch
@@ -28,6 +36,8 @@ case "${ID:-}" in
         UI_IMAGE="${UI_IMAGE}" LOCAL_DNS="${LOCAL_DNS}" TTYFORCE_DEV="${TTYFORCE_DEV}" \
         TTYFORCE_LATEST="${TTYFORCE_LATEST}" IMAGE_HOSTNAME="${IMAGE_HOSTNAME}" \
         SERIAL_CONSOLE="${SERIAL_CONSOLE}" RPI="${RPI}" \
+        RG35XX="${RG35XX}" RG35XX_DTB="${RG35XX_DTB}" UBOOT_BIN="${UBOOT_BIN}" \
+        RG35XX_DRAM="${RG35XX_DRAM}" \
         "${SCRIPT_DIR}/install.sh" "${IMAGE_SIZE}" "${IMAGE}"
     fi
     ;;

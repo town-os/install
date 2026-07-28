@@ -57,6 +57,33 @@ IMAGE=${2:-image.raw}
 # qemu 'virt' aarch64).
 RPI="${RPI:-}"
 
+# RG35XX builds an SD-card image for the Anbernic RG35XX Pro (and the rest of the
+# Allwinner H700 handheld family) that boots the way every Allwinner box does: the
+# SoC's BootROM reads U-Boot out of RAW SECTORS at the front of the card, U-Boot
+# then reads /extlinux/extlinux.conf off the FAT partition and loads the kernel.
+# NO UEFI, NO GRUB, and — unlike every other target — a bootloader that has to be
+# BUILT, because no distro packages U-Boot for this board. aarch64-only, btrfs-only.
+RG35XX="${RG35XX:-}"
+# Device tree handed to the kernel. Defaults to the Pro board file this repo
+# carries (dts/), which the patched-kernel build compiles into the tree; mainline
+# has no rg35xx-pro DT at all. Any of the staged H700 DTBs works here, as does an
+# absolute path to a .dtb from elsewhere.
+RG35XX_DTB="${RG35XX_DTB:-sun50i-h700-anbernic-rg35xx-pro.dtb}"
+# DRAM type of the target unit: H700 handhelds shipped with BOTH lpddr4 and
+# lpddr3, and the SPL's compiled-in timings must match or the board never brings
+# memory up (dead at power-on, no output at all). Both bootloaders are built and
+# staged on the boot partition; this selects which one is written to the raw
+# sectors. If a unit shows no sign of life, re-write the other variant.
+RG35XX_DRAM="${RG35XX_DRAM:-lpddr4}"
+# Skip the in-chroot U-Boot build and use this prebuilt u-boot-sunxi-with-spl.bin
+# instead (path on the build host, relative to the repo or absolute).
+UBOOT_BIN="${UBOOT_BIN:-}"
+# Where built kernels are cached between image builds (repo-relative). A patched
+# kernel build is the single most expensive step in this target — hours under
+# emulation — and its inputs are fully pinned, so it is built once per pin set
+# and reused. Delete the directory to force a rebuild.
+KERNEL_CACHE_DIR="${KERNEL_CACHE_DIR:-.kernel-cache}"
+
 # Builds are always NATIVE: the image architecture equals the build host (or the
 # same-arch builder container) architecture. We never cross-build or emulate, so
 # `uname -m` is authoritative for which kernel package and GRUB target to use.
@@ -106,6 +133,40 @@ if [ -n "$RPI" ]; then
   SERIAL_TTY="serial0"
 fi
 
+# Anbernic RG35XX (Allwinner H700) overrides. linux-aarch64 is still pacstrapped
+# (for the mkinitcpio presets, firmware and hooks) and already carries ARCH_SUNXI,
+# the H616/H700 clocks, MMC_SUNXI, the AXP717 PMIC and the RTL8821CS SDIO WiFi
+# driver — but it is then REPLACED by a kernel built from source with the H700
+# display patches, because mainline drives no display on this SoC family and the
+# panel IS this image's only console. The boot path differs too: U-Boot in raw sectors
+# + extlinux instead of UEFI/GRUB.
+if [ -n "$RG35XX" ]; then
+  if [ -n "$RPI" ]; then
+    echo "RPI and RG35XX are different boards — set only one." >&2
+    exit 1
+  fi
+  if [ "$ARCH" != "aarch64" ]; then
+    echo "RG35XX builds are aarch64-only (got $ARCH). Use 'make image TARGET=rg35xxpro'." >&2
+    exit 1
+  fi
+  if [ "$STORAGE_BACKEND" = "zfs" ]; then
+    echo "RG35XX builds do not support the zfs storage backend." >&2
+    exit 1
+  fi
+  case "$RG35XX_DRAM" in
+    lpddr3|lpddr4) ;;
+    *) echo "RG35XX_DRAM must be 'lpddr3' or 'lpddr4' (got '$RG35XX_DRAM')" >&2; exit 1 ;;
+  esac
+  # This target configures NO serial console: the handheld's own panel is the
+  # console (console=tty0, see the cmdline below) and its buttons are the
+  # keyboard, so the machine is set up with nothing plugged in. SERIAL_TTY is
+  # still set to the board's real UART (H700 UART0 is a DesignWare 8250 — ttyS0,
+  # not the PL011 ttyAMA0 of qemu 'virt') only because the shared serial-getty
+  # unit's ConditionKernelCommandLine is rewritten from it below; that getty is
+  # deliberately never enabled here.
+  SERIAL_TTY="ttyS0"
+fi
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -148,25 +209,46 @@ DEVICE=$(losetup -j "$IMAGE" | awk -F: '{ print $1 }' | head -1)
 print_info "Creating GPT partition table..."
 parted -s "$DEVICE" mklabel gpt
 
+# Raw space reserved AHEAD of the first partition. Normally 1 MiB (the standard
+# alignment gap; on x86_64 GRUB's BIOS core image lives in part1 itself).
+#
+# The RG35XX needs more: the Allwinner BootROM loads U-Boot from raw sectors of
+# the boot card, before any partition exists. Its first candidate is sector 16
+# (8 KiB) — which sits INSIDE the GPT partition-entry array (LBA 2..33) and would
+# destroy the partition table — but every ARM64 Allwinner SoC also checks sector
+# 256 (128 KiB) when it finds no image at 8 KiB, and 128 KiB is past the whole
+# GPT. So we write U-Boot at 128 KiB and keep GPT (and therefore the identical
+# 3-partition layout and shrink machinery) instead of dropping to MBR the way
+# most sunxi distro images do. u-boot-sunxi-with-spl.bin for the H700 (SPL +
+# TF-A BL31 + U-Boot proper) runs near 1 MiB, so push part1 out to 4 MiB and
+# leave the ~3.9 MiB between 128 KiB and it for the bootloader.
+if [ -n "$RG35XX" ]; then PART1_START_MIB=4; else PART1_START_MIB=1; fi
+PART1_END_MIB=$((PART1_START_MIB + 1))
+
 # Part1: BIOS boot partition (raw, for GRUB core image embed only — no filesystem).
 # The partition is created on every arch to keep partition numbering identical
 # (PART1/PART2/PART3), but the bios_grub flag and BIOS GRUB only apply to x86_64
 # — aarch64 is UEFI-only and never uses this partition.
 print_info "Creating BIOS boot partition..."
-parted -s "$DEVICE" mkpart grub 1MiB 2MiB
+parted -s "$DEVICE" mkpart grub "${PART1_START_MIB}MiB" "${PART1_END_MIB}MiB"
 if [ "$ARCH" = "x86_64" ]; then
   parted -s "$DEVICE" set 1 bios_grub on
 fi
 
-# Part2: EFI System Partition (UEFI/GRUB builds) OR the Pi boot partition (RPI).
-# 64 MiB is plenty for a GRUB stub, but a native Pi boot partition must hold the
-# kernel, initramfs, all board DTBs, the overlays/ tree, and the GPU firmware, so
-# the Pi build grows it to 512 MiB. It stays a FAT32 partition flagged ESP either
-# way — recent Pi 4/5 EEPROMs find the first bootable FAT partition on a 512-byte
-# GPT disk (the unformatted 1 MiB part1 is skipped).
+# Part2: EFI System Partition (UEFI/GRUB builds) OR the boot partition of the
+# native-boot targets (RPI, RG35XX). 64 MiB is plenty for a GRUB stub, but a
+# native boot partition must hold the kernel, initramfs and DTBs itself (plus the
+# overlays/ tree and GPU firmware on the Pi), so those builds grow it to 512 MiB.
+# It stays a FAT32 partition flagged ESP either way — recent Pi 4/5 EEPROMs find
+# the first bootable FAT partition on a 512-byte GPT disk (the unformatted part1
+# is skipped), and U-Boot scans every partition for extlinux.conf.
 print_info "Creating EFI System Partition..."
-if [ -n "$RPI" ]; then ESP_END_MIB=514; else ESP_END_MIB=66; fi
-parted -s "$DEVICE" mkpart ESP fat32 2MiB "${ESP_END_MIB}MiB"
+if [ -n "$RPI" ] || [ -n "$RG35XX" ]; then
+  ESP_END_MIB=$((PART1_END_MIB + 512))
+else
+  ESP_END_MIB=$((PART1_END_MIB + 64))
+fi
+parted -s "$DEVICE" mkpart ESP fat32 "${PART1_END_MIB}MiB" "${ESP_END_MIB}MiB"
 parted -s "$DEVICE" set 2 esp on
 
 # Part3: Data partition (holds /boot + root.sfs, >= 10GB)
@@ -317,7 +399,86 @@ sed -i "s|^ConditionKernelCommandLine=console=.*|ConditionKernelCommandLine=${SE
 chroot_cmd mkdir -p /usr/lib/town-os
 cp ./town-os.yaml $MOUNT_POINT/usr/lib/town-os/town-os.yaml
 rsync -a ./scripts/ $MOUNT_POINT/usr/lib/town-os/scripts/
-env -i HOME=/root PACKAGE_DNS="$PACKAGE_DNS" IMAGE_HOSTNAME="${IMAGE_HOSTNAME:-town-os}" TTYFORCE_DEV="${TTYFORCE_DEV:-}" TTYFORCE_LATEST="${TTYFORCE_LATEST:-}" arch-chroot $MOUNT_POINT sh -lc "bash /usr/lib/town-os/scripts/configure.sh"
+if [ -d ./dts ]; then
+  mkdir -p "$MOUNT_POINT/usr/lib/town-os/dts"
+  rsync -a ./dts/ "$MOUNT_POINT/usr/lib/town-os/dts/"
+fi
+
+# --- Patched kernel for the Allwinner H700 (RG35XX) ---
+# The reason this exists at all is the LCD: mainline drives everything else on
+# this board but has no display support for the H616/H700 SoC family, so the
+# stock kernel can only ever talk over the UART. scripts/build-kernel-rg35xx.sh
+# applies the (GPL, pinned) H700 patch set that ROCKNIX maintains and builds the
+# result here, replacing the pacstrapped ALARM kernel.
+#
+# It must run BEFORE configure.sh, which generates the initramfs — an initrd
+# built against the old kernel's modules would not match the kernel it boots.
+#
+# CACHED, because this is by far the most expensive step in the whole build
+# (hours under emulation) and its inputs are fully pinned: the cache key is the
+# hash of the build script itself, our device tree, and any pin overrides, so any
+# change to those misses the cache and rebuilds, while a repeat build of the same
+# pins extracts in seconds. The cache lives in the repo (bind-mounted/9p-shared
+# into the builder), which is the only writable place that outlives the chroot.
+if [ -n "$RG35XX" ]; then
+  KCACHE_KEY=$(cat ./scripts/build-kernel-rg35xx.sh ./dts/*.dts 2>/dev/null | sha256sum | cut -c1-16)
+  KCACHE_KEY="${KCACHE_KEY}-${KERNEL_COMMIT:-pin}-${ROCKNIX_COMMIT:-pin}-${RG35XX_KERNEL_PATCH_SKIP:-default}"
+  KCACHE_KEY=$(printf '%s' "$KCACHE_KEY" | sha256sum | cut -c1-24)
+  KCACHE_FILE="${KERNEL_CACHE_DIR}/rg35xx-kernel-${KCACHE_KEY}.tar.zst"
+  if [ -f "$KCACHE_FILE" ]; then
+    print_info "Reusing cached patched kernel: $KCACHE_FILE"
+    rm -rf "$MOUNT_POINT"/usr/lib/modules/*
+    rm -f "$MOUNT_POINT/boot/Image.gz"
+    tar --zstd -xf "$KCACHE_FILE" -C "$MOUNT_POINT"
+  else
+    print_info "Building patched kernel for the H700 (long; cached afterwards)..."
+    env -i HOME=/root \
+      KERNEL_COMMIT="${KERNEL_COMMIT:-}" KERNEL_SHA256="${KERNEL_SHA256:-}" \
+      ROCKNIX_COMMIT="${ROCKNIX_COMMIT:-}" \
+      RG35XX_KERNEL_PATCH_SKIP="${RG35XX_KERNEL_PATCH_SKIP:-}" \
+      arch-chroot $MOUNT_POINT sh -lc "bash /usr/lib/town-os/scripts/build-kernel-rg35xx.sh"
+    mkdir -p "$KERNEL_CACHE_DIR"
+    print_info "Caching the built kernel as $KCACHE_FILE"
+    tar --zstd -cf "$KCACHE_FILE" -C "$MOUNT_POINT" \
+      boot/Image boot/dtbs usr/lib/modules
+    # The cache is written by root (this script runs as root); hand it to the
+    # invoking user so a later non-root `rm -rf .kernel-cache` works.
+    [ -n "${SUDO_UID:-}" ] && chown -R "${SUDO_UID}:${SUDO_GID:-$SUDO_UID}" "$KERNEL_CACHE_DIR" || true
+  fi
+  [ -f "$MOUNT_POINT/boot/Image" ] || { echo "patched kernel build left no /boot/Image" >&2; exit 1; }
+fi
+
+# --- U-Boot for the Allwinner H700 (RG35XX) ---
+# No distro packages a bootloader for this board, so we build mainline U-Boot
+# (anbernic_rg35xx_h700_defconfig) plus the TF-A BL31 secure monitor it
+# chainloads. It runs INSIDE the chroot, right here: the chroot is aarch64 and
+# still has base-devel at this point — configure.sh (next line) is what strips
+# the toolchain back out, so a build placed after it would have no compiler.
+if [ -n "$RG35XX" ]; then
+  if [ -n "$UBOOT_BIN" ]; then
+    print_info "Using prebuilt U-Boot: $UBOOT_BIN"
+    [ -f "$UBOOT_BIN" ] || { echo "UBOOT_BIN=$UBOOT_BIN does not exist" >&2; exit 1; }
+    cp "$UBOOT_BIN" "$MOUNT_POINT/boot/u-boot-sunxi-with-spl.bin"
+  else
+    print_info "Building U-Boot + TF-A for the Allwinner H700..."
+    env -i HOME=/root \
+      UBOOT_VERSION="${UBOOT_VERSION:-}" ATF_VERSION="${ATF_VERSION:-}" \
+      arch-chroot $MOUNT_POINT sh -lc "bash /usr/lib/town-os/scripts/build-uboot-rg35xx.sh"
+  fi
+  # A prebuilt UBOOT_BIN is used for both DRAM variants (the caller supplied a
+  # blob for their own unit); a built one produces a binary per variant.
+  if [ -n "$UBOOT_BIN" ]; then
+    cp "$MOUNT_POINT/boot/u-boot-sunxi-with-spl.bin" "$MOUNT_POINT/boot/u-boot-sunxi-with-spl-${RG35XX_DRAM}.bin"
+  fi
+  [ -f "$MOUNT_POINT/boot/u-boot-sunxi-with-spl-${RG35XX_DRAM}.bin" ] || {
+    echo "U-Boot build produced no u-boot-sunxi-with-spl-${RG35XX_DRAM}.bin" >&2; exit 1; }
+fi
+
+# RG35XX is passed through so configure.sh can VERIFY the generated initrd
+# actually carries that board's WiFi (its only NIC), its gpio-keys controls (its
+# only input) and their firmware — there is no second console to recover with if
+# it doesn't.
+env -i HOME=/root PACKAGE_DNS="$PACKAGE_DNS" IMAGE_HOSTNAME="${IMAGE_HOSTNAME:-town-os}" TTYFORCE_DEV="${TTYFORCE_DEV:-}" TTYFORCE_LATEST="${TTYFORCE_LATEST:-}" RG35XX="$RG35XX" arch-chroot $MOUNT_POINT sh -lc "bash /usr/lib/town-os/scripts/configure.sh"
 
 # --- D-Bus systemd configuration via Podman container ---
 print_info "Configuring systemd units via D-Bus in Podman container..."
@@ -351,6 +512,11 @@ podman exec town-build busctl call \
 # stays correct as the serial instance list grows.
 if [ -n "$RPI" ]; then
   SERIAL_TTYS="ttyS0 ttyAMA0 ttyAMA10"
+elif [ -n "$RG35XX" ]; then
+  # No serial console exists on this image at all — the panel is the console — so
+  # no serial getty is enabled. town-os-getty@tty1 (enabled below) is the one
+  # that matters here, and it runs on the screen.
+  SERIAL_TTYS=""
 else
   SERIAL_TTYS="$SERIAL_TTY"
 fi
@@ -489,6 +655,115 @@ boot_partition=2
 AUTOBOOT
 
   print_info "Raspberry Pi boot files staged on partition 2 (FAT)."
+elif [ -n "$RG35XX" ]; then
+  # ---- Native Anbernic RG35XX boot: U-Boot + extlinux (no UEFI, no GRUB) ----
+  # Chain: H700 BootROM -> u-boot-sunxi-with-spl.bin from raw sector 256 (written
+  # at the very end of this script, after the partition table is final) -> U-Boot
+  # scans the partitions for /extlinux/extlinux.conf -> loads Image + initramfs +
+  # DTB off this FAT partition. From the kernel onward everything is identical to
+  # the other targets: root=UUID=<data> is what the town-squashfs hook expects.
+  print_info "Staging RG35XX boot files onto the FAT partition (U-Boot/extlinux, no GRUB)..."
+  FAT="$MOUNT_POINT/boot/efi"
+  SRC="$MOUNT_POINT/boot"
+
+  # ALARM's linux-aarch64 installs the raw ARM64 kernel as /boot/Image and the
+  # device trees under /boot/dtbs/<vendor>/.
+  [ -f "$SRC/Image" ] || { echo "expected $SRC/Image from $KERNEL_PKG but it is missing" >&2; exit 1; }
+  cp "$SRC/Image" "$FAT/Image"
+  INITRD_SRC=$(ls "$SRC"/initramfs-*.img | grep -v fallback | head -1)
+  cp "$INITRD_SRC" "$FAT/initramfs-linux.img"
+
+  # Ship every H700 board DTB, not just the selected one, so the board can be
+  # changed by editing extlinux.conf on the card with no rebuild.
+  cp "$SRC"/dtbs/allwinner/sun50i-h700-anbernic-*.dtb "$FAT"/ 2>/dev/null || true
+  # An absolute path in RG35XX_DTB is a caller-supplied .dtb (e.g. a Pro DT from
+  # KNULLI/ROCKNIX): copy it in and reference it by basename.
+  case "$RG35XX_DTB" in
+    /*) cp "$RG35XX_DTB" "$FAT"/ ; RG35XX_DTB="$(basename "$RG35XX_DTB")" ;;
+  esac
+  [ -f "$FAT/$RG35XX_DTB" ] || {
+    echo "device tree $RG35XX_DTB not found; staged DTBs: $(cd "$FAT" && echo *.dtb)" >&2
+    exit 1; }
+
+  # Stage BOTH DRAM variants of the bootloader on the boot partition. They are
+  # not read from there (the BootROM only looks at raw sectors) — they are there
+  # so a unit whose RAM type was guessed wrong can be rescued by re-writing
+  # 128 KiB of the card instead of rebuilding the image:
+  #   dd if=u-boot-sunxi-with-spl-lpddr3.bin of=/dev/sdX bs=1k seek=128 conv=notrunc
+  cp "$SRC"/u-boot-sunxi-with-spl-*.bin "$FAT"/
+  # Stash the SELECTED variant outside the image: it is written into the raw
+  # sectors at the very end of the build, long after $MOUNT_POINT is unmounted.
+  cp "$SRC/u-boot-sunxi-with-spl-${RG35XX_DRAM}.bin" /tmp/town-uboot.bin
+
+  # Kernel command line. THE SCREEN IS THE CONSOLE: console=tty0 and nothing
+  # else. Everything the box needs — kernel messages, the ttyforce installer, the
+  # login getty — lands on the handheld's own panel, driven by its own buttons
+  # (our device tree maps them to keyboard codes; see dts/). No serial console is
+  # configured anywhere in this image, so nothing has to be soldered to or
+  # plugged in to set the machine up.
+  #
+  # The town-installer hook points ttyforce at the LAST console=, so with tty0
+  # the sole entry the installer runs on the panel. That makes the display a HARD
+  # dependency of provisioning, which is exactly why the patched kernel is the
+  # default and why the build verifies the panel node survives into the DTB.
+  CMDLINE="console=tty0 root=UUID=$DATA_UUID rootfstype=ext4 rootwait rw"
+
+  # extlinux.conf — U-Boot's bootstd/syslinux bootmeth finds this by scanning
+  # partitions; no boot.scr and no mkimage needed. The second LABEL is the
+  # Sledgehammer entry: with no GRUB there is no grub-reboot/grubenv one-shot, so
+  # the trigger flips DEFAULT here instead (see the grub-reboot shim below), and
+  # scripts/sledgehammer.sh flips it back before it reboots.
+  mkdir -p "$FAT/extlinux"
+  cat > "$FAT/extlinux/extlinux.conf" <<EXTLINUX
+# Town OS — Anbernic RG35XX (Allwinner H700). Booted by U-Boot from this
+# partition; the bootloader itself lives in raw sectors at 128 KiB.
+DEFAULT townos
+PROMPT 0
+TIMEOUT 20
+
+LABEL townos
+    MENU LABEL Town OS
+    LINUX /Image
+    INITRD /initramfs-linux.img
+    FDT /$RG35XX_DTB
+    APPEND $CMDLINE
+
+LABEL sledgehammer
+    MENU LABEL Sledgehammer - Erase Permanent Storage And Reboot
+    LINUX /Image
+    INITRD /initramfs-linux.img
+    FDT /$RG35XX_DTB
+    APPEND $CMDLINE town.sledgehammer
+EXTLINUX
+
+  # grub-reboot shim. ttyforce triggers a sledgehammer wipe by running
+  # `grub-reboot "<menu title>"` and rebooting; that interface is baked into the
+  # ttyforce getty invocation (scripts/ttyforce-getty.sh), and the real
+  # grub-reboot from the `grub` package is inert here — this image has no
+  # grub.cfg and no grubenv. Replace it with a shim that performs the equivalent
+  # one-shot in extlinux terms. It deliberately overwrites /usr/bin/grub-reboot
+  # rather than shadowing it from /usr/local/bin, so it wins no matter how
+  # ttyforce resolves the command.
+  cat > "$MOUNT_POINT/usr/bin/grub-reboot" <<'GRUBSHIM'
+#!/bin/sh
+# Town OS (Anbernic RG35XX / U-Boot) — grub-reboot shim, installed by
+# make/install.sh. There is no GRUB on this image: boot entries live in
+# extlinux.conf on the FAT boot partition. Select the next boot by pointing
+# DEFAULT at the matching label. scripts/sledgehammer.sh resets it to `townos`
+# on the way through, which is what makes this a ONE-SHOT like grub-reboot.
+set -e
+conf=/boot/efi/extlinux/extlinux.conf
+[ -f "$conf" ] || { echo "grub-reboot: $conf not found" >&2; exit 1; }
+case "${1:-}" in
+  *[Ss]ledgehammer*) label=sledgehammer ;;
+  *)                 label=townos ;;
+esac
+sed -i "s/^DEFAULT .*/DEFAULT $label/" "$conf"
+sync
+GRUBSHIM
+  chmod 755 "$MOUNT_POINT/usr/bin/grub-reboot"
+
+  print_info "RG35XX boot files staged on partition 2 (FAT); DTB: $RG35XX_DTB"
 else
 
 print_info "Installing GRUB bootloader..."
@@ -579,7 +854,7 @@ if [ "$ARCH" = "x86_64" ]; then
       "$DEVICE"
 fi
 
-fi  # end UEFI/GRUB vs native-Pi boot
+fi  # end UEFI/GRUB vs native-boot (Pi / RG35XX)
 
 # --- Build squashfs image ---
 print_info "Building squashfs root image..."
@@ -655,6 +930,29 @@ truncate -s "$IMAGE_BYTES" "$IMAGE"
 # Rewrite partition table — sfdisk places the backup GPT at the new disk end
 sfdisk --force "$IMAGE" < /tmp/town-ptable.dump
 rm -f /tmp/town-ptable.dump
+
+# --- Write U-Boot into the raw boot sectors (RG35XX) ---
+# Done LAST, straight into the image file, so nothing that rewrites the partition
+# table (parted resizepart, the sfdisk restore above) can land on top of it.
+#
+# seek=128 (128 KiB, sector 256) rather than the traditional 8 KiB: every ARM64
+# Allwinner SoC checks 8 KiB first and then 128 KiB, and only the second location
+# clears the GPT partition-entry array. Nothing else may live between 128 KiB and
+# part1 at 4 MiB — the size check below enforces that.
+if [ -n "$RG35XX" ]; then
+  UBOOT_OFFSET_KIB=128
+  UBOOT_MAX_BYTES=$(( (PART1_START_MIB * 1024 - UBOOT_OFFSET_KIB) * 1024 ))
+  UBOOT_BYTES=$(stat -c %s /tmp/town-uboot.bin)
+  if [ "$UBOOT_BYTES" -gt "$UBOOT_MAX_BYTES" ]; then
+    echo "u-boot-sunxi-with-spl.bin is ${UBOOT_BYTES}B — it would overrun partition 1" >&2
+    echo "(only ${UBOOT_MAX_BYTES}B free between ${UBOOT_OFFSET_KIB}KiB and ${PART1_START_MIB}MiB)" >&2
+    exit 1
+  fi
+  print_info "Writing U-Boot (${RG35XX_DRAM}) to raw sector 256 (${UBOOT_OFFSET_KIB} KiB), ${UBOOT_BYTES} bytes..."
+  dd if=/tmp/town-uboot.bin of="$IMAGE" bs=1k seek="$UBOOT_OFFSET_KIB" conv=notrunc status=none
+  rm -f /tmp/town-uboot.bin
+  sync
+fi
 
 print_info "Image built successfully: $IMAGE ($(du -h "$IMAGE" | awk '{print $1}'))"
 

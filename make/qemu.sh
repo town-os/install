@@ -367,6 +367,28 @@ if [ -n "${RPI}" ] && [ "${ARCH}" != "aarch64" ]; then
   exit 1
 fi
 
+# RG35XX=1 (set by `make qemu-usb TARGET=rg35xxpro`) boots an Anbernic RG35XX
+# card. Same problem as the Pi, one step further: that image's bootloader is
+# U-Boot living in the card's RAW SECTORS, which only an Allwinner BootROM ever
+# reads — QEMU 'virt' has no such BootROM, and edk2 finds no EFI binary because
+# the image has none. So take the same escape hatch: DIRECT-KERNEL-BOOT the
+# Image + initramfs staged on the FAT partition.
+#
+# What this DOES test: the initrd, ttyforce, the squashfs/overlay root, and the
+# whole Town OS stack on aarch64 — the kernel is the same generic linux-aarch64
+# the TARGET=aarch64 image uses. What it CANNOT test: U-Boot, the DTB, and every
+# H700-specific driver, since 'virt' is not an H700. Real-hardware boot is still
+# the only proof of those.
+RG35XX="${RG35XX:-}"
+if [ -n "${RG35XX}" ] && [ "${ARCH}" != "aarch64" ]; then
+  echo "error: RG35XX is aarch64-only; use 'make qemu-usb TARGET=rg35xxpro' (got arch '${ARCH}')." >&2
+  exit 1
+fi
+if [ -n "${RPI}" ] && [ -n "${RG35XX}" ]; then
+  echo "error: RPI and RG35XX are different boards — set only one." >&2
+  exit 1
+fi
+
 # Architecture-specific machine, firmware, and display.
 MACHINE_ARGS=()
 FIRMWARE_ARGS=()
@@ -401,56 +423,82 @@ case "${ARCH}" in
     ;;
   aarch64)
     MACHINE_ARGS=(-machine virt,gic-version=max)
-    if [ -n "${RPI}" ]; then
-      # Pi image: direct-kernel-boot (no UEFI). Extract kernel8.img +
-      # initramfs-linux.img + cmdline.txt from the boot source's FAT partition
-      # (part 2 of the GPT — part 1 is the unused 1 MiB BIOS-boot slot). The USB
-      # disk is still attached below so the initrd finds the ext4 data/root.sfs
-      # via root=UUID=; direct boot only replaces the firmware/bootloader stage.
+    if [ -n "${RPI}" ] || [ -n "${RG35XX}" ]; then
+      # Native-boot image (Pi or RG35XX): DIRECT-KERNEL-BOOT, no firmware stage.
+      # Neither image has a UEFI binary — the Pi is loaded by the GPU bootloader
+      # from config.txt, the RG35XX by U-Boot from the card's raw sectors — and
+      # QEMU 'virt' can run neither flow, so booting either through edk2 just
+      # drops to the UEFI shell. Instead extract the kernel + initramfs (+ the
+      # kernel command line) that the build staged on the FAT partition and hand
+      # them to QEMU with -kernel/-initrd. The disk itself is still attached
+      # below, so the initrd finds the ext4 data/root.sfs via root=UUID=; direct
+      # boot only replaces the firmware/bootloader stage.
+      if [ -n "${RPI}" ]; then
+        DB_BOARD="Pi"; DB_KERNEL="kernel8.img"
+      else
+        DB_BOARD="RG35XX"; DB_KERNEL="Image"
+      fi
       #
-      # Locate the FAT partition. For a physical block device, lsblk lists the
-      # disk then its partitions in order, so line 3 is part 2. For an image file
-      # attach a partscan loop just to read it (the guest still boots from the
-      # file itself, so detach the loop right after extraction).
-      RPI_LOOP=""
+      # Locate the FAT partition (part 2 of the GPT — part 1 is the unused
+      # BIOS-boot slot). For a physical block device, lsblk lists the disk then
+      # its partitions in order, so line 3 is part 2. For an image file attach a
+      # partscan loop just to read it (the guest still boots from the file
+      # itself, so detach the loop right after extraction).
+      DB_LOOP=""
       if [ -b "${BOOT_SRC}" ]; then
         _p2=$(lsblk -rno NAME "${BOOT_SRC}" 2>/dev/null | sed -n '3p')
-        [ -n "${_p2}" ] && BOOTFS_PART="/dev/${_p2}"
+        # Not `[ -n ] && assign`: as the last statement of this branch an empty
+        # _p2 would make the whole branch return 1 and `set -e` would kill the
+        # script silently, before the explanatory error below can be printed.
+        if [ -n "${_p2}" ]; then BOOTFS_PART="/dev/${_p2}"; fi
       else
-        RPI_LOOP=$(sudo losetup -Pf --show "${BOOT_SRC}")
-        BOOTFS_PART="${RPI_LOOP}p2"
+        DB_LOOP=$(sudo losetup -Pf --show "${BOOT_SRC}")
+        BOOTFS_PART="${DB_LOOP}p2"
       fi
       if [ -z "${BOOTFS_PART:-}" ] || [ ! -b "${BOOTFS_PART}" ]; then
         echo "error: could not find the FAT (part 2) partition on ${BOOT_SRC}." >&2
-        [ -n "${RPI_LOOP}" ] && sudo losetup -d "${RPI_LOOP}" 2>/dev/null || true
+        [ -n "${DB_LOOP}" ] && sudo losetup -d "${DB_LOOP}" 2>/dev/null || true
         exit 1
       fi
-      RPI_MNT=$(mktemp -d)
-      RPI_KDIR=$(mktemp -d "${TMPDIR:-/tmp}/town-rpi-boot.XXXXXX")
-      if ! sudo mount -o ro "${BOOTFS_PART}" "${RPI_MNT}"; then
-        echo "error: could not mount ${BOOTFS_PART} (the Pi FAT partition)." >&2
-        [ -n "${RPI_LOOP}" ] && sudo losetup -d "${RPI_LOOP}" 2>/dev/null || true
+      DB_MNT=$(mktemp -d)
+      DB_KDIR=$(mktemp -d "${TMPDIR:-/tmp}/town-directboot.XXXXXX")
+      if ! sudo mount -o ro "${BOOTFS_PART}" "${DB_MNT}"; then
+        echo "error: could not mount ${BOOTFS_PART} (the FAT boot partition)." >&2
+        [ -n "${DB_LOOP}" ] && sudo losetup -d "${DB_LOOP}" 2>/dev/null || true
         exit 1
       fi
-      if ! sudo cp "${RPI_MNT}/kernel8.img" "${RPI_MNT}/initramfs-linux.img" "${RPI_KDIR}/" 2>/dev/null \
-         || ! RPI_CMDLINE=$(sudo cat "${RPI_MNT}/cmdline.txt" 2>/dev/null); then
-        echo "error: ${BOOTFS_PART} is missing kernel8.img/initramfs-linux.img/cmdline.txt." >&2
-        echo "       Is this actually a Raspberry Pi (TARGET=rpi) image?" >&2
-        sudo umount "${RPI_MNT}"; rmdir "${RPI_MNT}"
-        [ -n "${RPI_LOOP}" ] && sudo losetup -d "${RPI_LOOP}" 2>/dev/null || true
+      # The kernel command line lives in cmdline.txt on the Pi (firmware format)
+      # and in the APPEND of extlinux.conf's first LABEL on the RG35XX (U-Boot
+      # syslinux format) — that first label is `townos`, the default entry.
+      if [ -n "${RPI}" ]; then
+        DB_CMDLINE=$(sudo cat "${DB_MNT}/cmdline.txt" 2>/dev/null) || DB_CMDLINE=""
+      else
+        DB_CMDLINE=$(sudo awk '/^[[:space:]]*APPEND /{sub(/^[[:space:]]*APPEND /,""); print; exit}' \
+          "${DB_MNT}/extlinux/extlinux.conf" 2>/dev/null) || DB_CMDLINE=""
+      fi
+      if ! sudo cp "${DB_MNT}/${DB_KERNEL}" "${DB_MNT}/initramfs-linux.img" "${DB_KDIR}/" 2>/dev/null \
+         || [ -z "${DB_CMDLINE}" ]; then
+        echo "error: ${BOOTFS_PART} is missing ${DB_KERNEL}/initramfs-linux.img or its kernel cmdline." >&2
+        echo "       Is this actually a ${DB_BOARD} image?" >&2
+        sudo umount "${DB_MNT}"; rmdir "${DB_MNT}"
+        [ -n "${DB_LOOP}" ] && sudo losetup -d "${DB_LOOP}" 2>/dev/null || true
         exit 1
       fi
-      sudo umount "${RPI_MNT}"; rmdir "${RPI_MNT}"
-      [ -n "${RPI_LOOP}" ] && sudo losetup -d "${RPI_LOOP}" 2>/dev/null || true
-      sudo chown "$(id -u):$(id -g)" "${RPI_KDIR}/kernel8.img" "${RPI_KDIR}/initramfs-linux.img"
-      # Rewrite the kernel command line for QEMU 'virt'. Two edits:
+      sudo umount "${DB_MNT}"; rmdir "${DB_MNT}"
+      [ -n "${DB_LOOP}" ] && sudo losetup -d "${DB_LOOP}" 2>/dev/null || true
+      sudo chown "$(id -u):$(id -g)" "${DB_KDIR}/${DB_KERNEL}" "${DB_KDIR}/initramfs-linux.img"
+      # Rewrite the kernel command line for QEMU 'virt'. The console name is the
+      # board's, and 'virt' has only a PL011 at ttyAMA0:
       #
-      # 1. The Pi firmware rewrites the `serial0` alias to the board's real UART;
-      #    there is no such alias on virt, whose PL011 is ttyAMA0 — so map
-      #    console=serial0 -> console=ttyAMA0. root=UUID=/rootfstype/rootwait/rw
-      #    are kept verbatim so the squashfs initrd finds the data disk.
+      # 1. Pi: the firmware rewrites the `serial0` alias to the board's real
+      #    UART; there is no such alias here, so serial0 -> ttyAMA0.
+      #    RG35XX: the H700's UART0 is a DesignWare 8250 (ttyS0), which 'virt'
+      #    does not have either — ttyS0 -> ttyAMA0.
+      #    root=UUID=/rootfstype/rootwait/rw are kept verbatim so the squashfs
+      #    initrd finds the data partition.
       #
-      # 2. DROP console=tty1, leaving ttyAMA0 as the sole console (/dev/console).
+      # 2. DROP console=tty1 (Pi only; the RG35XX cmdline has no tty0/tty1 at
+      #    all — mainline has no display driver for that board).
       #    WHY: the linux-rpi kernel is built purely for real Pi display hardware
       #    (vc4/v3d/pl111/DSI panels) and has NO driver for any display QEMU's
       #    'virt' machine can emulate — no virtio_gpu, no bochs, no VGA, no
@@ -460,28 +508,36 @@ case "${ARCH}" in
       #    ttyforce launches on the dead framebuffer and exits 1, wedging the boot
       #    with no root provisioned. Removing tty1 runs the installer on ttyAMA0,
       #    which is wired to the foreground terminal below (headless serial). This
-      #    is a launch-time -append edit only; the real-Pi image on the stick keeps
-      #    its `console=serial0 console=tty1` (HDMI-primary on real hardware).
-      RPI_APPEND=$(printf '%s' "${RPI_CMDLINE}" \
-        | sed 's/console=serial0/console=ttyAMA0/g' \
+      #    is a launch-time -append edit only; the real image on the card keeps its
+      #    own console= (HDMI-primary on a real Pi, serial on a real RG35XX).
+      DB_APPEND=$(printf '%s' "${DB_CMDLINE}" \
+        | sed -e 's/console=serial0/console=ttyAMA0/g' -e 's/console=ttyS0/console=ttyAMA0/g' \
         | sed -E 's/[[:space:]]*console=tty1//g')
       KERNEL_ARGS=(
-        -kernel "${RPI_KDIR}/kernel8.img"
-        -initrd "${RPI_KDIR}/initramfs-linux.img"
-        -append "${RPI_APPEND}"
+        -kernel "${DB_KDIR}/${DB_KERNEL}"
+        -initrd "${DB_KDIR}/initramfs-linux.img"
+        -append "${DB_APPEND}"
       )
-      echo "Pi image: direct-kernel-boot (kernel8.img + initramfs from ${BOOTFS_PART}, no UEFI)"
-      echo "  cmdline: ${RPI_APPEND}"
-      # Keep a GTK WINDOW (not headless), but linux-rpi can drive no QEMU 'virt'
-      # display device (see above), so the VGA surface stays "Display output is
-      # not active". Instead show the guest's SERIAL console (ttyAMA0) INSIDE the
-      # window as a text console: -serial vc (set in the foreground branch below
-      # via RPI_SERIAL_VC) makes it a GTK tab, and show-tabs=on exposes the tab
-      # bar — switch to the "serial0" tab to see and drive the installer. The
-      # virtio-gpu tab is still there but inert. (For a real graphical framebuffer
-      # console, use TARGET=aarch64, whose linux-aarch64 kernel has virtio_gpu.)
-      GFX_ARGS=(-device virtio-gpu-pci -device usb-kbd -device usb-tablet -display gtk,show-tabs=on)
-      RPI_SERIAL_VC=1
+      echo "${DB_BOARD} image: direct-kernel-boot (${DB_KERNEL} + initramfs from ${BOOTFS_PART}, no UEFI/U-Boot)"
+      echo "  cmdline: ${DB_APPEND}"
+      # Display. The two boards differ here, because their consoles do:
+      #
+      #   RG35XX: the image has NO serial console — `console=tty0` is the only
+      #     entry, the installer runs on the panel, and the patched kernel has
+      #     virtio_gpu — so the guest paints the GTK window exactly as the real
+      #     device paints its LCD. That makes this the one emulation path that
+      #     shows what a user actually sees. usb-kbd stands in for the handheld's
+      #     buttons (which our device tree maps to the same keyboard codes).
+      #   Pi: linux-rpi can drive no QEMU 'virt' display device at all (see
+      #     above), so its serial console goes INSIDE the window as a GTK `vc`
+      #     tab (-serial vc via SERIAL_VC, with show-tabs=on to expose the tab
+      #     bar) — switch to the "serial0" tab to drive the installer there.
+      if [ -n "${RG35XX}" ]; then
+        GFX_ARGS=(-device virtio-gpu-pci -device usb-kbd -device usb-tablet -display gtk)
+      else
+        GFX_ARGS=(-device virtio-gpu-pci -device usb-kbd -device usb-tablet -display gtk,show-tabs=on)
+        SERIAL_VC=1
+      fi
     else
     # qemu-system-aarch64 'virt' has NO built-in firmware. Without UEFI (edk2)
     # via pflash it sits at a blank display forever — there is nothing to read
@@ -580,12 +636,13 @@ if [ "${FOREGROUND}" != "1" ]; then
   MONITOR_ARGS=(-monitor "unix:${MONITOR_SOCK},server=on,wait=off")
 elif [ "${#GFX_ARGS[@]}" -gt 0 ]; then
   # Graphical foreground (aarch64). Normally the console is the GTK VGA window and
-  # the serial port is exported on a socket for `make serial`. The emulated Pi
-  # boot (RPI_SERIAL_VC) has no working VGA, so its serial console goes to a GTK
+  # the serial port is exported on a socket for `make serial`. The emulated
+  # native-boot images (SERIAL_VC: Pi, RG35XX) have no usable VGA, so their
+  # serial console goes to a GTK
   # `vc` instead — it shows up as the "serial0" tab IN the window and is the
   # interactive console there (no socket, no `make serial`).
   DAEMON_ARGS=(-pidfile qemu.pid)
-  if [ -n "${RPI_SERIAL_VC:-}" ]; then
+  if [ -n "${SERIAL_VC:-}" ]; then
     SERIAL_ARGS=(-serial vc)
   else
     SERIAL_ARGS=(-serial "unix:/tmp/town-os-serial.sock,server=on,wait=off")
@@ -757,6 +814,84 @@ if [ -n "${USB_PHONE}" ]; then
   fi
 fi
 
+# --- Game controller passthrough -------------------------------------------
+#
+# The RG35XX installer is driven ENTIRELY by a gamepad: ttyforce reads the pad
+# through gilrs/evdev, and its on-screen keyboard — the only way to type a WiFi
+# password on a device with no keyboard — is raised by Start and typed on with
+# the face buttons. Emulating that image without a pad therefore exercises the
+# boot but not the part most likely to be wrong, so hand the guest a REAL
+# controller from the host.
+#
+# virtio-input-host passes the host evdev node straight through, capability
+# bitmaps and all, so the guest sees BTN_SOUTH/BTN_DPAD_* exactly as the handheld
+# presents them and gilrs classifies it as a gamepad. That is why this is not
+# `-device usb-kbd`-style emulation: QEMU has no synthetic gamepad, and a fake
+# keyboard would test the wrong input path entirely. It also works for Bluetooth
+# pads, which USB passthrough cannot do.
+#
+# GAMEPAD:
+#   unset / auto  auto-detect, but only for an RG35XX guest (the one whose
+#                 installer has no other input device). Nothing is grabbed on
+#                 other targets unless asked for by path.
+#   /dev/input/eventN   use exactly this device, on any target
+#   0 | off | none      never
+#
+# The HOST LOSES THE CONTROLLER while the VM holds it (virtio-input-host issues
+# an EVIOCGRAB), the same trade as USB_PHONE.
+GAMEPAD="${GAMEPAD:-auto}"
+PAD_ARGS=()
+PAD_DEV=""
+_detect_gamepad() {
+  for _e in /dev/input/event*; do
+    [ -e "${_e}" ] || continue
+    # ID_INPUT_JOYSTICK is udev's own classification, which is what every other
+    # gamepad-aware program keys off — more reliable than guessing from names.
+    if udevadm info --query=property --name="${_e}" 2>/dev/null \
+       | grep -q '^ID_INPUT_JOYSTICK=1'; then
+      echo "${_e}"
+      return 0
+    fi
+  done
+  return 1
+}
+case "${GAMEPAD}" in
+  0|off|no|none|"") ;;
+  auto)
+    if [ -n "${RG35XX}" ]; then
+      PAD_DEV=$(_detect_gamepad || true)
+      if [ -z "${PAD_DEV}" ]; then
+        echo "note: no game controller found on the host (udev ID_INPUT_JOYSTICK)."
+        echo "      The RG35XX installer is gamepad-driven — its on-screen keyboard"
+        echo "      cannot be raised without one. Plug a controller in, or drive the"
+        echo "      guest with the emulated USB keyboard instead."
+      fi
+    fi
+    ;;
+  /dev/input/event*)
+    if [ ! -e "${GAMEPAD}" ]; then
+      echo "error: GAMEPAD='${GAMEPAD}' does not exist." >&2
+      exit 1
+    fi
+    PAD_DEV="${GAMEPAD}"
+    ;;
+  *)
+    echo "error: GAMEPAD must be auto, 0, or a /dev/input/eventN path (got '${GAMEPAD}')." >&2
+    exit 1
+    ;;
+esac
+if [ -n "${PAD_DEV}" ]; then
+  # Read-WRITE, unlike the boot device: virtio-input-host opens the evdev node
+  # O_RDWR to grab it (and to drive force feedback).
+  if [ ! -w "${PAD_DEV}" ]; then
+    echo "Granting $(id -un) access to ${PAD_DEV} for this run..."
+    sudo setfacl -m "u:$(id -un):rw" "${PAD_DEV}" 2>/dev/null \
+      || sudo chmod o+rw "${PAD_DEV}"
+  fi
+  PAD_ARGS=(-device "virtio-input-host-pci,evdev=${PAD_DEV}")
+  echo "Game controller: ${PAD_DEV} -> guest (the host cannot use it until the VM exits)"
+fi
+
 # Assemble the full QEMU command line as an array.
 QEMU_CMD=(
   "${QEMU_BIN}"
@@ -781,6 +916,7 @@ QEMU_CMD=(
   -drive file=disk3.img,if=none,id=d3,format=raw
   -device ide-hd,drive=d3,bus=ahci0.3
   "${USB_PHONE_ARGS[@]}"
+  "${PAD_ARGS[@]}"
   "${GFX_ARGS[@]}"
   "${SERIAL_ARGS[@]}"
   "${MONITOR_ARGS[@]}"

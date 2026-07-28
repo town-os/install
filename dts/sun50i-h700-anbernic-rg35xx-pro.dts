@@ -1,0 +1,84 @@
+// SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+/*
+ * Device tree for the Anbernic RG35XX Pro (Allwinner H700), used by the Town OS
+ * `TARGET=rg35xxpro` image. Copied into the kernel tree and built by
+ * scripts/build-kernel-rg35xx.sh.
+ *
+ * WHY THIS FILE EXISTS: the Pro is in no kernel tree. Mainline carries only the
+ * -2024, -plus, -h and -sp boards, and while ROCKNIX does ship an rg35xx-pro
+ * device tree, theirs overrides a `&joypad` node belonging to their out-of-tree
+ * joypad driver — a driver this image does not carry, because the mainline
+ * gpio-keys controls are what our initrd has a driver for. So we take the same
+ * base ROCKNIX does and stop there.
+ *
+ * WHY -plus IS THE BASE: the Pro shares the Plus's board design — H700, AXP717
+ * PMIC, mmc0 (the TF1 boot slot), the RTL8821CS SDIO WiFi and Bluetooth on
+ * uart1, UART0 as the console, and the same 3.5" 640x480 panel. ROCKNIX, who
+ * have the hardware, base their Pro on -plus for exactly this reason. The
+ * display comes in through this include: the H700 LCD patches applied by
+ * build-kernel-rg35xx.sh land in the shared -2024 base that -plus includes, so
+ * the panel, its SPI init bus and the PWM backlight are inherited here.
+ *
+ * The Pro's dual analog sticks are NOT described. They hang off the SoC GPADC,
+ * which needs both a GPADC driver and an adc-joystick binding; describing them
+ * without those would produce a node nothing binds to. The digital controls —
+ * D-pad, face buttons, shoulders, volume — all come from -plus's gpio-keys and
+ * do work. This is a headless-appliance image, not a games console.
+ *
+ * If a unit turns out to have the second USB host port wired the way the RG35XX
+ * H does, build with RG35XX_DTB=sun50i-h700-anbernic-rg35xx-h.dtb instead: that
+ * board enables ehci1/ohci1 and its 5V regulator.
+ */
+
+/dts-v1/;
+
+#include "sun50i-h700-anbernic-rg35xx-plus.dts"
+
+/ {
+	model = "Anbernic RG35XX Pro";
+	compatible = "anbernic,rg35xx-pro", "allwinner,sun50i-h700";
+};
+
+/*
+ * Two small adjustments to the controls. Everything else is left exactly as the
+ * base device tree has it — BTN_SOUTH, BTN_DPAD_UP and the rest — because
+ * ttyforce reads this pad as a GAMEPAD through gilrs/evdev and drives its whole
+ * installer from it: D-pad navigates, Start raises the on-screen keyboard, the
+ * face buttons type on it, L2 shifts, L1/R1 page. Re-mapping these lines to
+ * keyboard codes would make gilrs stop seeing a gamepad at all and the OSK could
+ * never be raised, which on a box with no serial console and no keyboard would
+ * mean no way to enter a WiFi password.
+ *
+ * 1. A and B are swapped relative to their printed labels.
+ *
+ *    The base file follows the kernel convention of naming face buttons by
+ *    POSITION, so the physical "A" (right) carries BTN_EAST and the physical "B"
+ *    (bottom) carries BTN_SOUTH. ttyforce follows the other standard convention,
+ *    where South is the accept button (cross on a PlayStation pad). Composing
+ *    the two would put "accept" on the button printed B and "back" on the one
+ *    printed A. Swapping the two codes here makes the labels mean what they say.
+ *
+ * 2. Menu becomes KEY_A, which is not the joke it looks like.
+ *
+ *    ttyforce's getty blanks the panel after five minutes idle and only watches
+ *    input devices that advertise KEY_A — its test for "this is a keyboard".
+ *    A pure gamepad is therefore invisible to it, so on this board the screen
+ *    would blank and NOTHING on the device could wake it: no keyboard, no serial,
+ *    just a dark panel that looks like a dead box. One KEY_A anywhere on the
+ *    device qualifies it, and the watcher then counts every event from it —
+ *    including the gamepad buttons — as activity. Menu is the button to spend:
+ *    ttyforce maps BTN_MODE to nothing at all. The cost is that Menu types an
+ *    "a" if a text field happens to have focus.
+ *
+ *    The cleaner fix belongs upstream in ttyforce (teach the getty about the
+ *    gamepad the installer already understands); this makes the hardware work
+ *    with the ttyforce that exists.
+ */
+&gpio_keys_gamepad {
+	/* accept — physically the right-hand button, printed A */
+	button-a { linux,code = <BTN_SOUTH>; };
+	/* back — physically the bottom button, printed B */
+	button-b { linux,code = <BTN_EAST>; };
+	/* wake/activity: see (2) above. Unmapped by ttyforce as BTN_MODE. */
+	button-menu { linux,code = <KEY_A>; };
+};

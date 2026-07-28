@@ -6,7 +6,8 @@ fi
 
 # Sledgehammer wipe-boot trigger differs by platform (see ttyforce-getty.sh):
 # GRUB images use grub-reboot, the Raspberry Pi uses the firmware `tryboot`
-# one-shot. Detect the Pi by its device-tree model.
+# one-shot, and the Anbernic RG35XX takes the grub-reboot branch via a shim that
+# rewrites extlinux.conf. Detect the Pi by its device-tree model.
 if grep -qi 'raspberry pi' /proc/device-tree/model 2>/dev/null; then
   sledge=(--sledgehammer-tryboot)
 else
