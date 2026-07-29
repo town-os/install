@@ -34,6 +34,79 @@ say() { printf '\n[town-build] %s\n' "$*" > "$CONSOLE" 2>&1; }
 # Usage:  some_command 2>&1 | to_console
 to_console() { cat > "$CONSOLE"; }
 
+# --- A real controlling terminal and a working stdin for the build -----------
+# The kernel hands PID1 fd 0/1/2 on /dev/console but gives it NO session and NO
+# controlling terminal, so nothing below us could open /dev/tty, and to_console()
+# makes stdout a pipe while nothing reconnected stdin. Between them, a build
+# command that asked a question got no terminal, no visible prompt, and no way
+# to receive an answer.
+#
+# The RG35XX target is where that bites, because it is the only one that runs
+# real interactive-capable tooling deep inside the chroot — `patch` over the
+# ROCKNIX kernel patch series and `pacman -S` for the in-chroot build deps.
+# (`patch` prompting "File to patch:" into a >/dev/null was the confirmed hang;
+# see scripts/build-kernel-rg35xx.sh. It is fixed at the source with --batch,
+# but the console it exposed was broken for everything else too.)
+#
+# run_build() runs the command in its own session with the serial console as its
+# CONTROLLING terminal, so /dev/tty resolves for anything that insists on one
+# instead of erroring out. Output still goes through to_console, keeping the
+# non-tty plain-line rendering the serial log depends on.
+#
+# Its stdin is that same tty, so typing into the QEMU stdio console on the host
+# actually reaches whatever is running. That is worth having for debugging even
+# though the build is meant to be unattended: everything known to ask a question
+# is now handled at the source (`patch --batch` in
+# scripts/build-{kernel,uboot}-rg35xx.sh; a keyring that already trusts the
+# distro keys, via scripts/pacman-keyring.sh, so pacman never asks to import
+# one), and a prompt appearing at all means something unforeseen — being able to
+# answer it beats staring at a hang.
+#
+# Everything below inherits this — the terminal, its stdin, and the controlling
+# terminal — through plain fd and session inheritance. No environment variable
+# carries any of it, which is what makes it survive the `env -i` that
+# make/install.sh uses for the chroot builds: a controlling terminal is a
+# property of the process, not of its environment, so /dev/tty keeps resolving
+# all the way down and gpg finds a terminal without being told where it is.
+#
+# Resolve the real tty device rather than using /dev/console: /dev/console is a
+# redirector (5,1), and TIOCSCTTY wants the underlying terminal.
+CTTY="$CONSOLE"
+if [ -r /sys/class/tty/console/active ]; then
+  for _t in $(cat /sys/class/tty/console/active 2>/dev/null); do
+    if [ -c "/dev/$_t" ]; then CTTY="/dev/$_t"; break; fi
+  done
+fi
+
+# Put the console into known-good line-discipline settings. Nothing else does:
+# PID1 never touches termios, so the tty carries whatever the kernel left on it.
+# The default IS effectively sane (ICANON|ECHO|ICRNL), but "effectively" is not
+# something to rely on when the failure mode is a build that hangs on a question
+# you cannot answer. ICRNL specifically is load-bearing: QEMU's stdio chardev
+# clears ICRNL on the HOST terminal, so pressing Enter sends a bare CR down the
+# wire and only the guest's ICRNL turns it into the newline that terminates a
+# canonical read. Without it, a typed answer sits in the line buffer forever.
+stty sane < "$CTTY" 2>/dev/null || true
+
+# Probe setsid --ctty for real (it hard-fails if TIOCSCTTY is refused) so a
+# kernel/tty combination that won't hand over a controlling terminal degrades to
+# "stdin is at least the tty" instead of failing every build command.
+SETSID=""
+if command -v setsid >/dev/null 2>&1 && setsid -c -w true < "$CTTY" >/dev/null 2>&1; then
+  SETSID=setsid
+fi
+
+# Usage:  run_build some_command args...
+# The tty on fd 0 is both what setsid --ctty hands over (TIOCSCTTY reads fd 0)
+# and what the command inherits as its stdin — one redirect, no indirection.
+run_build() {
+  if [ -n "$SETSID" ]; then
+    "$SETSID" -c -w "$@" < "$CTTY" 2>&1 | to_console
+  else
+    "$@" < "$CTTY" 2>&1 | to_console
+  fi
+}
+
 finish() {
   status="$1"
   mkdir -p /mnt/repo/.build-env 2>/dev/null || true
@@ -63,22 +136,72 @@ finish() {
 # shellcheck disable=SC1091
 . /mnt/repo/.build-env/guest-params.env
 
+# --- 0. Minimal /dev, before anything that needs it. ---------------------------
+# This VM runs a bare shell as PID1 with NO udev, so a fresh devtmpfs has none of
+# the /dev entries a normal Arch host gets from udev/systemd. devtmpfs is a
+# SINGLE shared kernel instance, so creating them here also makes them appear in
+# the chroot's /dev later (pacstrap mirrors the same fs) — the reason one setup
+# covers both the VM and the chroot.
+#
+# It runs FIRST, ahead of the keyring work below, because pacman-key is bash and
+# leans on process substitution — key_is_lsigned() and key_is_revoked() both read
+# from `< <(gpg ...)`, which is /dev/fd/NN. Without /dev/fd every one of those
+# reads dies with "/dev/fd/63: No such file or directory", pacman-key silently
+# mis-classifies each key it inspects (already-signed keys look unsigned, revoked
+# keys look live), and the keyring it builds is not the keyring it reports.
+#
+#   /dev/shm  install.sh's pacstrap mounts a tmpfs on <root>/dev/shm and aborts
+#             with "mount point /dev/shm does not exist" if the dir isn't there.
+#   /dev/fd   mkinitcpio (run by install.sh in the chroot) hard-fails without it:
+#             `[[ -e /dev/fd ]] || die "/dev must be mounted!"`. Plus the
+#             pacman-key dependency above.
+mkdir -p /dev/shm
+mount -t tmpfs shm /dev/shm 2>/dev/null || true
+ln -sfn /proc/self/fd   /dev/fd
+ln -sfn /proc/self/fd/0 /dev/stdin
+ln -sfn /proc/self/fd/1 /dev/stdout
+ln -sfn /proc/self/fd/2 /dev/stderr
+
 # --- 1. Ensure a healthy pacman keyring (every boot; cheap, self-heals). -------
-# A cached build-env can carry a gnupg home that has a trustdb.gpg file but NO
-# imported keys — `podman export` of the base image ships exactly such a home —
-# and then EVERY pacman db sync (including install.sh's own `pacman -Sy`) dies
-# with "GPGME error: No data / invalid or corrupted database (PGP signature)".
-# So: gate the slow, entropy-hungry --init on whether real keys are actually
-# present (not merely on the trustdb file existing), and treat a failed
-# --populate as FATAL instead of swallowing it with `|| true` — a half-built
-# keyring silently reaching install.sh is exactly what caused BUILD_FAIL. This
+# A cached build-env can carry a gnupg home that has a trustdb.gpg file but no
+# usable keys — `podman export` of the base image ships exactly such a home — and
+# then EVERY pacman db sync (including install.sh's own `pacman -Sy`) dies with
+# "GPGME error: No data / invalid or corrupted database (PGP signature)". This
 # lives OUTSIDE the /.town-provisioned gate so it also repairs an already-cached
 # disk. virtio-rng feeds the guest so --init's master-key generation won't stall.
-if ! pacman-key --list-keys 2>/dev/null | grep -q '^pub'; then
-  say "Initializing pacman keyring (empty/absent — regenerating)"
-  rm -rf /etc/pacman.d/gnupg
-  pacman-key --init >/dev/console 2>&1 || finish BUILD_FAIL
-  pacman-key --populate archlinuxarm >/dev/console 2>&1 || finish BUILD_FAIL
+#
+# The verdict comes from scripts/pacman-keyring.sh over the 9p share, the same
+# checker make/install.sh runs inside the image chroot: every fingerprint the
+# distro lists in /usr/share/pacman/keyrings/*-trusted must be present AND fully
+# valid. Read its header for why the weaker "is anything trusted" question is not
+# good enough and why `trust-model always` is a trap rather than a shortcut.
+#
+# A failed repair is FATAL, never `|| true`: a half-built keyring reaching
+# install.sh is what produced BUILD_FAIL with a wall of "unknown trust" errors.
+PACMAN_GPGDIR="$(pacman-conf gpgdir 2>/dev/null || true)"
+[ -n "$PACMAN_GPGDIR" ] || PACMAN_GPGDIR=/etc/pacman.d/gnupg
+# `archlinuxarm` is named as REQUIRED: this VM is always an Arch Linux ARM
+# build-env, and its one builder key signs every package the build installs.
+KEYRING_CHECK=/mnt/repo/scripts/pacman-keyring.sh
+
+# Undo an earlier revision of this script, which appended gpg overrides
+# (including that `trust-model always`) to the keyring config. The build-env disk
+# outlives the run that wrote them, so a stale cached disk would keep failing
+# every package as untrusted no matter how good its keyring is.
+for f in "$PACMAN_GPGDIR/gpg.conf" "$PACMAN_GPGDIR/dirmngr.conf"; do
+  if grep -q '^# town-os-batch$' "$f" 2>/dev/null; then
+    say "Removing stale town-os gpg overrides from $f"
+    sed -i '/^# town-os-batch$/,$d' "$f"
+  fi
+done
+
+if ! sh "$KEYRING_CHECK" verify archlinuxarm > "$CONSOLE" 2>&1; then
+  say "pacman keyring does not trust the distro signing keys — rebuilding it"
+  rm -rf "$PACMAN_GPGDIR"
+  run_build pacman-key --init || finish BUILD_FAIL
+  run_build pacman-key --populate || finish BUILD_FAIL
+  # Re-verify through run_build so the fingerprints it names reach the console.
+  run_build sh "$KEYRING_CHECK" verify archlinuxarm || finish BUILD_FAIL
 fi
 
 # --- 2. Provision the toolchain once (cached on the build-env disk). -----------
@@ -86,11 +209,11 @@ fi
 # happens later inside install.sh's pacstrapped chroot, so base-devel is enough.
 if [ ! -f /.town-provisioned ]; then
   say "Provisioning aarch64 build toolchain (one-time; slow under TCG)"
-  pacman -Syu --noconfirm --needed \
+  run_build pacman -Syu --noconfirm --needed \
       base-devel arch-install-scripts parted e2fsprogs dosfstools squashfs-tools \
       rsync psmisc lsof util-linux gptfdisk btrfs-progs mdadm \
       podman fuse-overlayfs crun \
-      2>&1 | to_console || finish BUILD_FAIL
+      || finish BUILD_FAIL
   touch /.town-provisioned
 fi
 
@@ -108,26 +231,6 @@ rsync -a --delete \
 
 cd /root/build || finish BUILD_FAIL
 
-# install.sh's pacstrap sets up the chroot's API mounts, including a tmpfs on
-# <root>/dev/shm. devtmpfs is a SINGLE shared kernel instance, so pacstrap's
-# fresh <root>/dev mirrors the VM's /dev — and town-init only created /dev/pts,
-# never /dev/shm, so pacstrap aborts with "mount point /dev/shm does not exist".
-# Create the dir (appears in pacstrap's chroot /dev via the shared devtmpfs) and
-# give the build VM a real /dev/shm too.
-mkdir -p /dev/shm
-mount -t tmpfs shm /dev/shm 2>/dev/null || true
-
-# mkinitcpio (run by install.sh inside the chroot) refuses to build unless
-# /dev/fd exists: it does `[[ -e /dev/fd ]] || die "/dev must be mounted!"`. On a
-# normal Arch host udev/systemd populate /dev/{fd,stdin,stdout,stderr}; this
-# emulated VM runs a bare shell as PID1 with NO udev, so a fresh devtmpfs has
-# none of them. devtmpfs is a single shared instance, so creating them here makes
-# them appear in the chroot's /dev too (same fs) — the same trick as /dev/shm.
-ln -sfn /proc/self/fd   /dev/fd
-ln -sfn /proc/self/fd/0 /dev/stdin
-ln -sfn /proc/self/fd/1 /dev/stdout
-ln -sfn /proc/self/fd/2 /dev/stderr
-
 # install.sh loop-mounts the image (losetup) and may touch fs modules; ensure
 # they're loaded (best-effort — some may be built into the kernel).
 modprobe loop 2>/dev/null || true
@@ -135,7 +238,7 @@ modprobe ext4 2>/dev/null || true
 modprobe btrfs 2>/dev/null || true
 
 say "Running install.sh ${IMAGE_SIZE} ${IMAGE} (RPI='${RPI}' RG35XX='${RG35XX:-}')"
-if env \
+if run_build env \
      CONTROLLER_IMAGE="${CONTROLLER_IMAGE}" ROLODEX_IMAGE="${ROLODEX_IMAGE}" \
      UI_IMAGE="${UI_IMAGE}" LOCAL_DNS="${LOCAL_DNS}" \
      TTYFORCE_DEV="${TTYFORCE_DEV}" TTYFORCE_LATEST="${TTYFORCE_LATEST}" \
@@ -143,7 +246,7 @@ if env \
      RPI="${RPI}" RG35XX="${RG35XX:-}" RG35XX_DTB="${RG35XX_DTB:-}" \
      UBOOT_BIN="${UBOOT_BIN:-}" \
      RG35XX_DRAM="${RG35XX_DRAM:-}" \
-     ./make/install.sh "${IMAGE_SIZE}" "${IMAGE}" 2>&1 | to_console
+     ./make/install.sh "${IMAGE_SIZE}" "${IMAGE}"
 then
   # --- 4. Export the finished image to the host over 9p. ----------------------
   if [ -e "/root/build/${IMAGE}" ]; then

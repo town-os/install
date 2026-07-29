@@ -104,7 +104,14 @@ for p in "$PATCHES"/*.patch; do
     *" $name "*) echo "kernel: skipping $name (RG35XX_KERNEL_PATCH_SKIP)"; continue ;;
   esac
   echo "kernel: applying $name"
-  if ! patch -p1 -F2 --no-backup-if-mismatch -i "$p" >/dev/null; then
+  # --batch is not optional in an unattended build: without it, a patch whose
+  # target file patch cannot locate makes it PROMPT ("File to patch:") and block
+  # on stdin — and the >/dev/null below swallows the prompt, so the build simply
+  # stops dead with no output and no clue. Worse, anything typed is taken as a
+  # filename, so an operator answering "y" just gets re-prompted invisibly.
+  # --batch takes the default (skip) instead, which fails the patch, which is
+  # caught right here and reported by name.
+  if ! patch --batch -p1 -F2 --no-backup-if-mismatch -i "$p" >/dev/null; then
     echo "kernel patch FAILED to apply: $name" >&2
     echo "The pinned kernel and the pinned ROCKNIX patch set have drifted apart." >&2
     echo "Re-pin KERNEL_COMMIT/ROCKNIX_COMMIT together, or skip it via" >&2

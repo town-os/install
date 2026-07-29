@@ -312,6 +312,25 @@ fi
 # The stamped cache still serves unchanged packages; only updated ones download.
 pacman -Sy --noconfirm
 
+# The Arch Linux ARM signing key, which nothing else pulls in on aarch64.
+# `base` depends on `archlinux-keyring` — Arch's x86 keyring — and that is the
+# ONLY keyring the chroot gets, while every aarch64 package in the image was
+# signed by the single Arch Linux ARM Build System key. It is absent because
+# ALARM ships archlinuxarm-keyring in its base ROOTFS rather than as a
+# dependency of anything, so a pacstrapped chroot never sees it.
+#
+# Two consequences, both real: the in-chroot `pacman -S` that the RG35XX
+# kernel/U-Boot builds run stops to import that key and then blocks fetching it
+# from a keyserver, and the SHIPPED IMAGE cannot verify an ALARM package either
+# — `pacman -S` on the running device hits the same wall.
+#
+# Guarded on the package actually existing so a non-ALARM aarch64 repo (a
+# BASE_IMAGE override) doesn't fail the build over a package it doesn't carry.
+if [ "$ARCH" = "aarch64" ] && pacman -Si archlinuxarm-keyring >/dev/null 2>&1; then
+  PACKAGES="$PACKAGES archlinuxarm-keyring"
+fi
+
+
 pacstrap -Kc $MOUNT_POINT $PACKAGES
 
 print_info "System setup..."
@@ -404,6 +423,43 @@ if [ -d ./dts ]; then
   rsync -a ./dts/ "$MOUNT_POINT/usr/lib/town-os/dts/"
 fi
 
+# --- Make the chroot's pacman keyring usable before anything installs into it ---
+# The RG35XX build is the ONLY path in this repo that runs `pacman -S` inside the
+# image chroot: scripts/build-{kernel,uboot}-rg35xx.sh install their own build
+# deps there (bc, dtc, swig, python, ...). Every other target only pacstraps.
+#
+# That chroot keyring is NOT ready for it, for two independent reasons:
+#
+#   1. `pacstrap -K` runs `pacman-key --init` and NOTHING else (see
+#      /usr/bin/pacstrap) — the keyring it creates is EMPTY. Distro keys arrive
+#      only via a keyring package's own install scriptlet, and
+#      archlinuxarm-keyring's is conditional on /usr/bin/pacman-key already
+#      existing when it runs. (pacstrap's own package verification doesn't
+#      notice: it runs the host's pacman with the host's absolute GPGDir, so it
+#      verifies against the BUILD ENV's keyring, not this one.)
+#   2. archlinuxarm-keyring wasn't even installed here until the package list
+#      above added it — `base` pulls Arch's x86 archlinux-keyring and nothing
+#      pulls ALARM's, because ALARM ships it in its base rootfs instead.
+#
+# Together those left the chroot with Arch's x86 master keys fully trusted and
+# the one Arch Linux ARM key absent, so `pacman -S bc dtc` printed
+#   :: Import PGP key 77193F152BDBE6A6, "Arch Linux ARM Build System"? [Y/n] y
+# auto-answered yes (--noconfirm), went to a KEYSERVER for it, and blocked there.
+# Nothing prompting, nothing failing — the build just stopped.
+#
+# scripts/pacman-keyring.sh closes it offline, populating from the keyring
+# package now on disk. Naming `archlinuxarm` as REQUIRED is what makes this
+# airtight: it asserts the keyring is installed at all, so the check cannot pass
+# vacuously on Arch's keys the way "is anything trusted" did.
+if [ -n "$RG35XX" ]; then
+  print_info "Ensuring the chroot's pacman keyring trusts the distro signing keys"
+  chroot_cmd "sh /usr/lib/town-os/scripts/pacman-keyring.sh ensure archlinuxarm" || {
+    echo "The chroot's pacman keyring is unusable; the in-chroot kernel/U-Boot" >&2
+    echo "builds would stall fetching signing keys from a keyserver." >&2
+    exit 1
+  }
+fi
+
 # --- Patched kernel for the Allwinner H700 (RG35XX) ---
 # The reason this exists at all is the LCD: mainline drives everything else on
 # this board but has no display support for the H616/H700 SoC family, so the
@@ -432,6 +488,10 @@ if [ -n "$RG35XX" ]; then
     tar --zstd -xf "$KCACHE_FILE" -C "$MOUNT_POINT"
   else
     print_info "Building patched kernel for the H700 (long; cached afterwards)..."
+    # No terminal is passed in the environment: this script installs build deps
+    # inside the chroot (pacman -S), and anything there that wants a terminal
+    # gets one by inheriting the controlling terminal, which survives `env -i`
+    # because it is a property of the process rather than of its environment.
     env -i HOME=/root \
       KERNEL_COMMIT="${KERNEL_COMMIT:-}" KERNEL_SHA256="${KERNEL_SHA256:-}" \
       ROCKNIX_COMMIT="${ROCKNIX_COMMIT:-}" \

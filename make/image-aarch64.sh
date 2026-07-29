@@ -310,6 +310,23 @@ trap on_interrupt INT TERM
 # (ttyAMA0) is on our stdio AND Ctrl-C is delivered to QEMU as SIGINT (QEMU then
 # exits), so the build is interruptible. -nographic would instead route Ctrl-C
 # into the guest (signal=off), leaving Ctrl-A X as the only way out.
+#
+# Our stdin IS the guest's keyboard: make/image-aarch64-guest.sh runs each build
+# command in its own session with ttyAMA0 as its controlling terminal and its
+# stdin on that tty, so what is typed here reaches whatever is running. The
+# build should never need it (gpg is in batch mode and `patch --batch` cannot
+# prompt), but when something unforeseen does ask, it can be answered.
+#
+# -monitor on a unix socket: the HMP monitor is otherwise unreachable on this
+# path, because the stdio chardev is a plain serial with signal=on rather than a
+# mux (no Ctrl-A c). It is the only way to tell a wedged guest apart from one
+# that is simply not receiving input — `sendkey` injects keystrokes at the
+# device level, bypassing the chardev entirely, and `info chardev` shows the
+# serial's state. Same tool make/qemu.sh exports for the dev VM.
+#   socat - UNIX-CONNECT:$MONITOR_SOCK
+MONITOR_SOCK="${MONITOR_SOCK:-/tmp/town-os-build-monitor.sock}"
+rm -f "$MONITOR_SOCK"
+log "HMP monitor: socat - UNIX-CONNECT:$MONITOR_SOCK"
 "$QEMU_BIN" \
   -machine virt \
   -accel tcg,thread=multi,tb-size=512 \
@@ -329,6 +346,7 @@ trap on_interrupt INT TERM
   -display none \
   -chardev stdio,id=serial0,signal=on \
   -serial chardev:serial0 \
+  -monitor "unix:$MONITOR_SOCK,server=on,wait=off" \
   -no-reboot
 
 trap - INT TERM

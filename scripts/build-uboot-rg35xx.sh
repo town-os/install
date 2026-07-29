@@ -89,7 +89,10 @@ BL31="$ATF_SRC/build/$ATF_PLAT/release/bl31.bin"
 cd "$UBOOT_SRC"
 # ROCKNIX's DRAM fix for dram_sun50i_h616.c, shipped identically in both of
 # their U-Boot packages — apply once, before either configuration is built.
-patch -p1 -F2 --no-backup-if-mismatch \
+# --batch so a patch whose target file cannot be located fails loudly (set -e
+# catches it) rather than prompting "File to patch:" and blocking forever on a
+# console the emulated build VM has no way to answer.
+patch --batch -p1 -F2 --no-backup-if-mismatch \
   -i "$RX/u-boot-DDR4/patches/0001-Update-dram_sun50i_h616.c.patch"
 cp "$RX/u-boot-DDR3/sources/configs/anbernic_rg35xx_h700_lpddr3_defconfig" configs/
 cp "$RX/u-boot-DDR4/sources/configs/anbernic_rg35xx_h700_lpddr4_defconfig" configs/

@@ -66,9 +66,10 @@ IMAGE_BUILDER := $(if $(EMULATE),make/image-aarch64.sh,make/image.sh)
 IMAGE_FLAVOR     := $(if $(RPI),-rpi)$(if $(RG35XX),-rg35xxpro)
 IMAGE            ?= town-os-$(BUILD_DATE)-$(BUILD_ARCH)$(IMAGE_FLAVOR).img
 IMAGE_SIZE       ?= 12G
-# Where the *-log build targets tee their transcript. A build always leaves a
-# full log here even when it fails (the recipe captures the exit code through
-# the tee pipe). Same shape as town-os's test-full-log.
+# Where the *-log build targets tee their transcript (`make image-log`, and any
+# other `make <target>-log` — see the %-log pattern rule). A build always leaves
+# a full log here even when it fails: the recipe captures the exit code through
+# the tee pipe. Same facility as town-os's `test-full-log`.
 LOG_DIR          ?= /tmp/town-os-install/log
 # Image tags are arch-suffixed (rc.latest-x86_64 / rc.latest-aarch64): each
 # repository publishes per-arch tags rather than a multi-arch manifest. Builds
@@ -172,8 +173,11 @@ RG35XX_DRAM ?=
 .PHONY: help run run-release stop image image-release compress-release build-installer push-installer qemu qemu-fg qemu-usb \
         qemu-release virtualbox virtualbox-fg virtualbox-release \
         stop-qemu stop-virtualbox vm-ip serial clean clean-images \
-        cleanup-loopback deps deps-debian release flash rebuild-qemu image-container \
-        image-log
+        cleanup-loopback deps deps-debian release flash rebuild-qemu image-container
+# NOTE: no *-log target may be listed above. `make <target>-log` is served by the
+# `%-log` pattern rule (below, next to `image:`), and GNU make skips the
+# implicit-rule search entirely for .PHONY targets — listing image-log here makes
+# it match nothing and fail with "No rule to make target 'image-log'".
 
 help:
 	@echo 'Town OS Install — Makefile targets'
@@ -182,7 +186,9 @@ help:
 	@echo '  image            Build the disk image for TARGET (default: native host arch)'
 	@echo '                   TARGET=x86_64|aarch64|rpi|rg35xxpro; non-x86 targets emulate'
 	@echo '                   on an x86 host'
-	@echo '  image-log        Same as image, tee'\''d into a timestamped log under $(LOG_DIR)'
+	@echo '  <target>-log     Any build target, tee'\''d into a timestamped log under $(LOG_DIR)'
+	@echo '                   (image-log, image-release-log, release-log, ...); the log is'
+	@echo '                   kept when the build fails, and named for the arch/flavor'
 	@echo '  image-container  Force the same-arch Arch container build path (native only)'
 	@echo '  image-release    Build the image and compress it to .bz2'
 	@echo '  build-installer  Build the installer OCI image from town-os.img.bz2 (no push)'
@@ -253,7 +259,7 @@ help:
 	@echo '  TTYFORCE_DEV     Non-empty installs ttyforce from git instead of crates.io'
 	@echo '  TTYFORCE_LATEST  Non-empty installs the latest crates.io ttyforce (ignores the pin)'
 	@echo '  KEEP_MOUNT       Non-empty skips the unmount after install, for debugging'
-	@echo '  LOG_DIR          = $(LOG_DIR)  (where image-log tees its transcript)'
+	@echo '  LOG_DIR          = $(LOG_DIR)  (where <target>-log tees its transcript)'
 	@echo '  BASE_IMAGE       Arch base image for the container build path (env var)'
 	@echo '  BUILD_MIRROR     Pacman mirror for the container build; defaults to a US mirror (env var)'
 	@echo
@@ -343,12 +349,48 @@ $(IMAGE): $(IMAGE_SOURCES) .build-config
 # TARGET=rpi on an x86_64 host build via full-system emulation automatically.
 image: $(IMAGE)
 
-# Same as `image`, tee'd into a timestamped log file under $(LOG_DIR). The log is
-# always written even if the build fails: set -o pipefail makes the pipeline fail
-# with make's exit status, which we capture in $$rc and re-raise after printing
-# the log path, so tee still flushes the full transcript on failure.
-image-log:
-	@bash -c 'set -o pipefail; mkdir -p "$(LOG_DIR)"; logfile="$(LOG_DIR)/image-$$(date +%s).log"; echo "Logging to: $$logfile"; rc=0; $(MAKE) image 2>&1 | tee "$$logfile" || rc=$$?; echo "Log file: $$logfile"; exit $$rc'
+# `make <target>-log` runs `make <target>` with the whole transcript tee'd into a
+# timestamped file under $(LOG_DIR) — `make image-log`, `make image-release-log`,
+# `make release-log`, `make image-container-log`. Same facility as town-os's
+# `test-full-log`, generalized to a pattern rule so a new build target gets its
+# logged variant for free.
+#
+# The log is always written even when the build FAILS, which is the case that
+# matters: `set -o pipefail` makes the pipeline carry make's exit status rather
+# than tee's, so it is captured in $$rc, the path is printed, and only then is
+# the failure re-raised — tee has already flushed the full transcript by then.
+#
+# The name carries the arch/flavor, so an emulated `TARGET=rg35xxpro` run and a
+# native x86_64 run of the same target don't leave two indistinguishable logs
+# (they take completely different code paths and fail in completely different
+# ways). The timestamp is sortable rather than epoch seconds so `ls` orders the
+# runs, and a `<target>-<arch><flavor>-latest.log` symlink tracks the newest —
+# keyed the same way, so tailing an rg35xxpro build isn't hijacked by a native
+# build started next to it.
+#
+# That symlink is placed BEFORE the build runs, not after: its whole purpose is
+# `tail -F $(LOG_DIR)/image-aarch64-rg35xxpro-latest.log` from another terminal
+# while the build is still going, which is how you watch an emulated build that
+# takes hours. tee creates the file immediately, so there is nothing to race.
+#
+# stdin is deliberately left alone: the emulated build hands the guest's serial
+# console our stdin (make/image-aarch64.sh), so a build under this wrapper is
+# still typeable if something unforeseen asks a question.
+#
+# Pattern rules are skipped for .PHONY targets, so nothing matched by this may be
+# listed there.
+%-log:
+	@bash -c 'set -o pipefail; \
+	  mkdir -p "$(LOG_DIR)"; \
+	  stem="$*-$(BUILD_ARCH)$(IMAGE_FLAVOR)"; \
+	  logfile="$(LOG_DIR)/$$stem-$$(date +%Y%m%d-%H%M%S).log"; \
+	  : > "$$logfile"; \
+	  ln -sfn "$$logfile" "$(LOG_DIR)/$$stem-latest.log"; \
+	  echo "Logging to: $$logfile"; \
+	  echo "Follow it with: tail -F $(LOG_DIR)/$$stem-latest.log"; \
+	  rc=0; $(MAKE) $* 2>&1 | tee "$$logfile" || rc=$$?; \
+	  echo "Log file: $$logfile"; \
+	  exit $$rc'
 
 # Force the Arch-container build path regardless of host (install.sh runs inside
 # a same-arch Arch container). On non-Arch hosts `make image` already dispatches

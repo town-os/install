@@ -110,7 +110,7 @@ Once the VM is running, use `make vm-ip` to resolve its IP address.
 | `image`             | Build the raw disk image (skips if up to date)                 |
 | `image TARGET=rpi`  | Build a native-boot Raspberry Pi image (Pi 4/400/CM4, Pi 5/CM5)|
 | `image TARGET=rg35xxpro` | Build an SD image for the Anbernic RG35XX Pro (Allwinner H700) |
-| `image-log`         | Same as `image`, tee'd into a timestamped log under `LOG_DIR`   |
+| `<target>-log`      | Any build target, tee'd into a timestamped log under `LOG_DIR` (`image-log`, `release-log`, …) |
 | `image-container`   | Force the same-arch Arch container build path (native only)     |
 | `flash`             | Build image if stale, write to USB (`USB_DEV=/dev/sdX`)         |
 | `flash RPI=1`       | Flash the Raspberry Pi image (`-rpi` artifact) to USB/SD/NVMe   |
@@ -357,7 +357,7 @@ Override on the command line, e.g. `make qemu VM_MEMORY=8G`.
 | `RG35XX_DRAM`      | `lpddr4`                         | DRAM type of the target unit; `lpddr3` for older units |
 | `UBOOT_BIN`        | *(empty)*                        | Prebuilt `u-boot-sunxi-with-spl.bin` to use instead of building one |
 | `IMAGE_SIZE`       | `12G`                            | Size of the raw disk image               |
-| `LOG_DIR`          | `/tmp/town-os-install/log`       | Where `image-log` writes its build transcript |
+| `LOG_DIR`          | `/tmp/town-os-install/log`       | Where `<target>-log` writes its build transcript. Kept even when the build fails; named for the arch/flavor (`image-aarch64-rg35xxpro-<date>.log`), with a `-latest.log` symlink created up front so `tail -F` can follow a running build |
 | `CONTROLLER_BASE`  | `quay.io/town/town`              | Controller image repository (no tag)      |
 | `CONTROLLER_TAG`   | `rc.latest-<arch>`               | Controller image tag (arch-suffixed; composed onto base) |
 | `CONTROLLER_IMAGE` | `$(CONTROLLER_BASE):$(CONTROLLER_TAG)` | Full controller image reference (override to use a different registry) |

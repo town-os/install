@@ -14,6 +14,7 @@ make image TARGET=rpi      # Raspberry Pi (aarch64 native-boot) image
 make image TARGET=rg35xxpro # Anbernic RG35XX Pro (Allwinner H700) SD image
 make image-container # force the same-arch Arch container build path (native only)
 make image-log   # same as image, tee'd into a timestamped log under $(LOG_DIR)
+                 # (any build target works: `make <target>-log`, e.g. release-log)
 make             # print the target/variable help (the default goal is `help`, not a build)
 make run         # build image if stale and launch a libvirt-managed VM
 make qemu-fg     # build and launch QEMU with serial console attached
@@ -264,7 +265,7 @@ The compressed USB image is published to a container registry, not a file host. 
 | `USB_DEV` | *(empty)* | Physical USB block device for `make flash` (write) and `make qemu-usb` (boot read-only, `snapshot=on`). |
 | `GAMEPAD` | `auto` | Game controller passed through to a `qemu-usb` guest via `virtio-input-host-pci`. `auto` auto-detects one (by udev `ID_INPUT_JOYSTICK`) **only for an RG35XX guest**, whose installer is gamepad-driven; other targets need an explicit `/dev/input/eventN`. `0` disables. The host loses the pad while the VM holds it (`EVIOCGRAB`). |
 | `USB_PHONE` | *(empty)* | Pass a live phone through to the guest over USB: `auto`, `vid:pid`, or `bus.port`. Not a boot device — the host loses the phone (adb included) while the VM holds it. |
-| `LOG_DIR` | `/tmp/town-os-install/log` | Where `make image-log` tees its build transcript (a full log is left even when the build fails). |
+| `LOG_DIR` | `/tmp/town-os-install/log` | Where the `%-log` pattern rule tees its build transcript. `make <target>-log` wraps **any** build target (`image-log`, `image-release-log`, `release-log`, `image-container-log`) — same facility as town-os's `test-full-log`. A full log is left even when the build **fails** (`set -o pipefail` + captured `$rc`), the filename carries the arch/flavor (`image-aarch64-rg35xxpro-<date>.log`) so runs of different targets don't collide, and a `<stem>-latest.log` symlink is created **before** the build so `tail -F` can follow a long emulated build from another terminal. `*-log` targets must NOT be listed in `.PHONY` — make skips the implicit-rule search for phony targets, which would break the pattern match. |
 | `INSTALLER_BASE` | `quay.io/town/installer` | Installer-image repository (no tag) that `make push-installer` builds and pushes the compressed USB image to. |
 | `INSTALLER_TAG` | `release-$(uname -m)` (`+-rpi` when `RPI=1`) | Rolling installer-image tag (arch-suffixed). `make push-installer` pushes this **and** a dated `${INSTALLER_TAG}-$(date +%Y%m%d)`. The website pull script defaults to this tag; `RPI=1` makes it `release-$(uname -m)-rpi` so the Pi installer is a separate tag. |
 
@@ -285,6 +286,12 @@ make/Containerfile.installer # Scratch installer image: COPY town-os.img.bz2 + d
 make/qemu.sh            # Launch the dev VM (bridge/DNS/IPv6 setup, display, USB, LAN relay)
 make/vm-relay.sh        # Expose the NAT'd guest to the LAN (socat TCP + WireGuard UDP DNAT)
 scripts/configure.sh    # Runs inside chroot — installs rust binaries, configures systemd
+scripts/pacman-keyring.sh # Make pacman's keyring trust the distro signing keys, offline.
+                        #   `pacstrap -K` only runs `pacman-key --init` (empty keyring), so a
+                        #   chroot can end up without the one key that signs every ALARM
+                        #   package; pacman then stalls fetching it from a keyserver mid-build.
+                        #   Verifies PER KEY (every fingerprint in */-trusted), not "is
+                        #   anything trusted". Used by install.sh (chroot) and the build VM.
 scripts/build-uboot-rg35xx.sh # Runs inside chroot (RG35XX only) — builds U-Boot + TF-A
                         #   BL31 for the H700, one binary per DRAM type; nobody packages one
 scripts/build-kernel-rg35xx.sh # Runs inside chroot (RG35XX only) — builds a kernel with
