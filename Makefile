@@ -92,10 +92,14 @@ VM_DISK_SIZE ?= $(shell grep '^vm_disk_size:' town-os.yaml \
                   | awk '{ print $$2 }' | tr -d '"' | tr -d "'" \
                   || echo 50G)
 VM_MEMORY   ?= 4G
-# vCPUs for the dev VM. QEMU defaults to 1, which starves CPU-count-scaled worker
-# pools (e.g. rolodex's tokio runtime); give it several cores so it resolves like
-# real hardware. Override with VM_CPUS=N.
-VM_CPUS     ?= 4
+# vCPUs for the VMs (the dev VM and the emulated cross-arch build VM both take it).
+# QEMU defaults to 1, which starves CPU-count-scaled worker pools (e.g. rolodex's
+# tokio runtime) and leaves an emulated build's rustc/kernel compile single-file.
+# Default to three quarters of the host's cores: enough to behave like real
+# multi-core hardware, while leaving the host responsive (under TCG each vCPU is a
+# busy emulation thread). Falls back to 4 if nproc is unavailable, floors at 1.
+# Override with VM_CPUS=N.
+VM_CPUS     ?= $(shell n=$$(nproc 2>/dev/null || echo 4); c=$$(( n / 4 * 3 )); if [ "$$c" -lt 1 ]; then c=1; fi; echo "$$c")
 VM_BRIDGE   ?= virbr0
 VM_NAME     ?= town-os
 # Pin the VM to a specific IP via a libvirt DHCP reservation. Defaults to .50 on
@@ -271,7 +275,7 @@ help:
 	@echo '  VM_NAME          = $(VM_NAME)'
 	@echo '  VM_BRIDGE        = $(VM_BRIDGE)'
 	@echo '  VM_MEMORY        = $(VM_MEMORY)'
-	@echo '  VM_CPUS          = $(VM_CPUS)  (QEMU'\''s default of 1 starves rolodex'\''s worker pool)'
+	@echo '  VM_CPUS          = $(VM_CPUS)  (3/4 of the host'\''s cores; dev VM and the emulated build VM)'
 	@echo '  VM_DISK_SIZE     = $(VM_DISK_SIZE)  (each of the four data disks)'
 	@echo '  VM_IP            = $(VM_IP)  (libvirt DHCP reservation;'
 	@echo '                   give each concurrently-running VM its own address)'
@@ -342,8 +346,14 @@ FORCE:
 # full-system aarch64 emulator (make/image-aarch64.sh) when TARGET requests an
 # arch the host can't build natively (EMULATE=1). Both take the same
 # "IMAGE_SIZE IMAGE" signature and honor the same env vars.
+#
+# VM_CPUS is passed for the EMULATE=1 path: the emulated build VM runs
+# multi-threaded TCG, so its -smp genuinely scales the (dominant) rustc and kernel
+# compiles. The native builder ignores it. VM_MEMORY is deliberately NOT passed —
+# the build VM's own 8G default is sized for rustc/LLVM link peaks and must not be
+# overwritten by the dev VM's smaller default; set it explicitly to change it.
 $(IMAGE): $(IMAGE_SOURCES) .build-config
-	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) TTYFORCE_DEV=$(TTYFORCE_DEV) TTYFORCE_LATEST=$(TTYFORCE_LATEST) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) SERIAL_CONSOLE=$(SERIAL_CONSOLE) RPI=$(RPI) RG35XX=$(RG35XX) RG35XX_DTB=$(RG35XX_DTB) RG35XX_DRAM=$(RG35XX_DRAM) UBOOT_BIN=$(UBOOT_BIN) ${PWD}/$(IMAGE_BUILDER) $(IMAGE_SIZE) $(IMAGE)
+	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) TTYFORCE_DEV=$(TTYFORCE_DEV) TTYFORCE_LATEST=$(TTYFORCE_LATEST) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) SERIAL_CONSOLE=$(SERIAL_CONSOLE) RPI=$(RPI) RG35XX=$(RG35XX) RG35XX_DTB=$(RG35XX_DTB) RG35XX_DRAM=$(RG35XX_DRAM) UBOOT_BIN=$(UBOOT_BIN) VM_CPUS=$(VM_CPUS) ${PWD}/$(IMAGE_BUILDER) $(IMAGE_SIZE) $(IMAGE)
 
 # Build the disk image for TARGET (default: native host arch). TARGET=aarch64 or
 # TARGET=rpi on an x86_64 host build via full-system emulation automatically.
