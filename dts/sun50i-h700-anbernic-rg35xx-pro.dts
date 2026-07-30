@@ -4,12 +4,10 @@
  * `TARGET=rg35xxpro` image. Copied into the kernel tree and built by
  * scripts/build-kernel-rg35xx.sh.
  *
- * WHY THIS FILE EXISTS: the Pro is in no kernel tree. Mainline carries only the
- * -2024, -plus, -h and -sp boards, and while ROCKNIX does ship an rg35xx-pro
- * device tree, theirs overrides a `&joypad` node belonging to their out-of-tree
- * joypad driver — a driver this image does not carry, because the mainline
- * gpio-keys controls are what our initrd has a driver for. So we take the same
- * base ROCKNIX does and stop there.
+ * WHY THIS FILE EXISTS: the Pro is in no kernel tree — mainline carries only the
+ * -2024, -plus, -h and -sp boards. ROCKNIX ships a Pro device tree, and this is
+ * theirs (-plus base, amux-count = 4) plus three button codes changed for
+ * ttyforce. Everything else is deliberately identical to what they run.
  *
  * WHY -plus IS THE BASE: the Pro shares the Plus's board design — H700, AXP717
  * PMIC, mmc0 (the TF1 boot slot), the RTL8821CS SDIO WiFi and Bluetooth on
@@ -19,11 +17,15 @@
  * build-kernel-rg35xx.sh land in the shared -2024 base that -plus includes, so
  * the panel, its SPI init bus and the PWM backlight are inherited here.
  *
- * The Pro's dual analog sticks are NOT described. They hang off the SoC GPADC,
- * which needs both a GPADC driver and an adc-joystick binding; describing them
- * without those would produce a node nothing binds to. The digital controls —
- * D-pad, face buttons, shoulders, volume — all come from -plus's gpio-keys and
- * do work. This is a headless-appliance image, not a games console.
+ * THE CONTROLS ARE NOT gpio-keys ON THIS BUILD. The same patch set replaces the
+ * mainline gpio-keys gamepad in the -2024 base with a `rocknix-singleadc-joypad`
+ * node (patch 0140) bound to ROCKNIX's out-of-tree driver, which the kernel
+ * build compiles as a module. That driver is what makes the Pro's dual analog
+ * sticks work — they hang off the SoC GPADC behind a GPIO-selected analog mux
+ * that no mainline binding walks — and it presents buttons and both sticks as a
+ * single input device. `amux-count = <4>` below is what enables the sticks: the
+ * shared base sets it to 0 for the stickless Plus/2024, and 4 is the value
+ * ROCKNIX's own Pro device tree uses.
  *
  * If a unit turns out to have the second USB host port wired the way the RG35XX
  * H does, build with RG35XX_DTB=sun50i-h700-anbernic-rg35xx-h.dtb instead: that
@@ -40,7 +42,7 @@
 };
 
 /*
- * Two small adjustments to the controls. Everything else is left exactly as the
+ * The pad, with two small adjustments. Everything else is left exactly as the
  * base device tree has it — BTN_SOUTH, BTN_DPAD_UP and the rest — because
  * ttyforce reads this pad as a GAMEPAD through gilrs/evdev and drives its whole
  * installer from it: D-pad navigates, Start raises the on-screen keyboard, the
@@ -48,6 +50,10 @@
  * keyboard codes would make gilrs stop seeing a gamepad at all and the OSK could
  * never be raised, which on a box with no serial console and no keyboard would
  * mean no way to enter a WiFi password.
+ *
+ * The child nodes are the base's sw1..sw17 (sw5 = PA0, the button printed A;
+ * sw6 = PA1, printed B; sw11 = PE3, Menu), and the joypad driver reads whatever
+ * `linux,code` each one carries — it does not care that one of them is a KEY_*.
  *
  * 1. A and B are swapped relative to their printed labels.
  *
@@ -74,11 +80,14 @@
  *    gamepad the installer already understands); this makes the hardware work
  *    with the ttyforce that exists.
  */
-&gpio_keys_gamepad {
+&joypad {
+	/* The Pro has both analog sticks: four muxed ADC channels, not zero. */
+	amux-count = <4>;
+
 	/* accept — physically the right-hand button, printed A */
-	button-a { linux,code = <BTN_SOUTH>; };
+	sw5 { linux,code = <BTN_SOUTH>; };
 	/* back — physically the bottom button, printed B */
-	button-b { linux,code = <BTN_EAST>; };
+	sw6 { linux,code = <BTN_EAST>; };
 	/* wake/activity: see (2) above. Unmapped by ttyforce as BTN_MODE. */
-	button-menu { linux,code = <KEY_A>; };
+	sw11 { linux,code = <KEY_A>; };
 };

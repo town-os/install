@@ -231,15 +231,25 @@ Two things were needed for that:
   DE33 mixer and nothing else — no H616 display-engine compatible, no LCD timing
   controller, and `sun50i-h616.dtsi` has no display nodes at all. That work was
   posted upstream in July 2025 and never landed. The build applies the **GPL H700
-  patch set ROCKNIX maintains**, pinned by commit, on top of a pinned upstream
-  kernel: display engine, TCON, the generic MIPI-DPI/SPI panel driver, the PWM
-  driver and backlight, and USB OTG host mode.
+  patch set ROCKNIX maintains**, pinned by commit, on top of the kernel.org
+  tarball ROCKNIX builds that device against (pinned by version + sha256; the
+  two pins move together or the patches stop applying): display engine, TCON,
+  the generic MIPI-DPI/SPI panel driver, the PWM driver and backlight, and USB
+  OTG host mode.
 - **The buttons drive it as a gamepad.** ttyforce (>= 0.5.1) reads the pad
   through gilrs/evdev: the D-pad navigates, **Start raises an on-screen
   keyboard**, the face buttons type on it, L2 shifts, L1/R1 change page. So the
   device tree keeps the stock `BTN_*` gamepad codes — remapping them to keyboard
   keys would hide the pad from gilrs and the OSK could never be raised. **No USB
   keyboard is needed, for text entry or anything else.**
+
+  The pad comes from ROCKNIX's out-of-tree `rocknix-singleadc-joypad` driver
+  (also pinned by commit), which the same build compiles as a module: their
+  device tree binds the buttons to it, and it is the only driver that reads the
+  **analog sticks** — those sit behind a GPIO-selected ADC mux no mainline
+  binding walks. Buttons and both sticks arrive as a single input device, which
+  is what gilrs wants to see. On this board that module *is* the input, so the
+  build refuses to finish if it does not make it into the initrd.
 
 Our device tree changes exactly two things about the controls:
 
@@ -277,14 +287,17 @@ sudo dd if=/mnt/boot/u-boot-sunxi-with-spl-lpddr3.bin of=/dev/sdX \
 
 Both are in the initrd, and the build fails if they aren't:
 
-- **Controls:** every button on the board is a device-tree `gpio-keys` line, so
-  `gpio_keys` is built into the patched kernel (and bundled into the initrd on
-  the stock one) — without it the handheld has no input at all. `joydev` plus `xpad`/`hid_*` (Sony,
-  PlayStation, Nintendo, Steam, Microsoft, Logitech) cover USB gamepads on every
-  image. The **analog sticks do not work**: they need the SoC GPADC, and
-  `CONFIG_SUN20I_GPADC`/`CONFIG_JOYSTICK_ADC` are unset in the ALARM kernel.
-  Buttons also emit `BTN_*` codes, which the console does not turn into
-  keystrokes — they are for `evdev` consumers, not for driving a TUI on `tty0`.
+- **Controls:** the whole pad — buttons, D-pad, shoulders, thumb clicks and both
+  **analog sticks** — is one input device from the `rocknix_singleadc_joypad`
+  module, which is therefore bundled into the initrd; without it the handheld has
+  no input at all, so `verify_initrd` fails the build if it is missing. The
+  sticks work because that driver walks the ADC mux itself through
+  `CONFIG_SUN20I_GPADC`; mainline's `adc-joystick` path (which the patch set
+  removes) is not built by the ALARM kernel at all. `gpio_keys` remains for the
+  volume buttons, and `joydev` plus `xpad`/`hid_*` (Sony, PlayStation, Nintendo,
+  Steam, Microsoft, Logitech) cover USB gamepads on every image. Buttons emit
+  `BTN_*` codes, which the console does not turn into keystrokes — they are for
+  `evdev` consumers, not for driving a TUI on `tty0`.
 - **WiFi:** the onboard Realtek RTL8821CS (SDIO) is supported by mainline
   `rtw88_8821cs`; it and `rtw88/rtw8821c_fw.bin` are bundled, along with
   `rfkill`. `configure.sh` verifies the generated initrd actually contains them
@@ -297,9 +310,10 @@ Both are in the initrd, and the build fails if they aren't:
 
 Mainline has **no `rg35xx-pro` device tree** — only `-2024`, `-plus`, `-h` and
 `-sp` — so this repo carries one at `dts/sun50i-h700-anbernic-rg35xx-pro.dts`,
-compiled by the kernel build. It derives from `-plus`, the same base ROCKNIX
-uses for the Pro, and inherits the display from the patch set. The analog sticks
-are not described (they need a GPADC driver mainline does not build). All family
+compiled by the kernel build. It is ROCKNIX's own Pro device tree — `-plus` base
+plus `amux-count = <4>`, which is what enables the analog sticks — with three
+button codes changed for ttyforce, and it inherits the display from the patch
+set. All family
 DTBs are staged on the FAT partition, so the choice can be changed by editing
 `extlinux.conf` on the card — or at build time:
 

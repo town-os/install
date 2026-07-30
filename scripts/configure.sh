@@ -75,16 +75,24 @@ WANT_MODULES="$WANT_MODULES rtw88_8821cs rtw88_sdio rfkill"
 # Game controllers, which on the RG35XX are how the box is INSTALLED: ttyforce
 # reads the pad through gilrs/evdev and drives its whole initrd installer from it
 # — D-pad navigates, Start raises the on-screen keyboard, the face buttons type
-# on it. Every one of those buttons is a gpio-keys line in the device tree, so
-# gpio_keys and evdev must exist before ttyforce runs. On the patched H700 kernel
-# both are built IN (and the builtin filter below drops them here); on any kernel
-# that builds them modular this list is what puts them in the initrd. joydev adds
-# the legacy /dev/input/jsN interface; the hid-* and xpad drivers cover USB
-# gamepads on every image. (The analog sticks are NOT reachable: they hang off the
-# SoC GPADC, and CONFIG_SUN20I_GPADC/CONFIG_JOYSTICK_ADC are unset — no RG35XX
-# device tree describes an adc-joystick either. Buttons only, which is all the
-# installer uses.)
-WANT_MODULES="$WANT_MODULES gpio_keys gpio_keys_polled joydev evdev virtio_input usbhid hid_generic xpad hid_sony hid_playstation hid_nintendo hid_steam hid_microsoft hid_logitech hid_logitech_dj hid_logitech_hidpp"
+# on it. So the pad has to work in the initrd, before switch_root.
+#
+# rocknix_singleadc_joypad is that pad, and on this board it is the ONLY input
+# device: the patched H700 kernel's device tree (patch 0140) replaces the
+# mainline gpio-keys gamepad with a node bound to this out-of-tree driver, built
+# as a module by scripts/build-kernel-rg35xx.sh and installed under
+# modules/<kver>/extra. It reports the face buttons, D-pad, shoulders, thumb
+# clicks AND both analog sticks (which mainline cannot read at all — they sit
+# behind a GPIO-selected ADC mux this driver walks) as one device. Without it in
+# the initrd the installer has no input whatsoever, so verify_initrd below
+# asserts it. Everything it depends on — input-polldev, ff-memless, IIO and the
+# sun20i GPADC — is built into that kernel.
+#
+# gpio_keys is still listed: the volume buttons remain a gpio-keys node, and it
+# is the gamepad driver on every other image. joydev adds the legacy
+# /dev/input/jsN interface; the hid-* and xpad drivers cover USB gamepads
+# everywhere. Names built in (=y) or absent are filtered out below.
+WANT_MODULES="$WANT_MODULES rocknix_singleadc_joypad gpio_keys gpio_keys_polled joydev evdev virtio_input usbhid hid_generic xpad hid_sony hid_playstation hid_nintendo hid_steam hid_microsoft hid_logitech hid_logitech_dj hid_logitech_hidpp"
 
 # Display, for the RG35XX's own LCD to be a console from the initrd onward. On
 # the patched H700 kernel (scripts/build-kernel-rg35xx.sh) the whole chain — DE33
@@ -200,10 +208,12 @@ verify_initrd() {
 
 # The RG35XX is the target that cannot be recovered by plugging in a monitor, so
 # it is the one that gets checked: SDIO WiFi (its only NIC) with its firmware,
-# the gpio-keys controls (its only input), and the regulatory database cfg80211
-# needs before it will bring a radio up.
+# the joypad driver (its only input — the device tree has no gpio-keys gamepad on
+# this kernel, so an initrd without this module is an installer nobody can
+# touch), and the regulatory database cfg80211 needs before it will bring a radio
+# up. gpio_keys stays in the list for the volume buttons.
 if [ -n "${RG35XX:-}" ]; then
-  VERIFY_MODULES="rtw88_8821cs rtw88_sdio gpio_keys sunxi_mmc"
+  VERIFY_MODULES="rtw88_8821cs rtw88_sdio rocknix_singleadc_joypad gpio_keys sunxi_mmc"
   VERIFY_FIRMWARE="rtw88/rtw8821c_fw.bin regulatory.db"
   # The installer runs IN THE INITRD on this board, on the machine's own screen
   # and buttons, so both have to work there — not just after switch_root:

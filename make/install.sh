@@ -465,7 +465,9 @@ fi
 # this board but has no display support for the H616/H700 SoC family, so the
 # stock kernel can only ever talk over the UART. scripts/build-kernel-rg35xx.sh
 # applies the (GPL, pinned) H700 patch set that ROCKNIX maintains and builds the
-# result here, replacing the pacstrapped ALARM kernel.
+# result here, replacing the pacstrapped ALARM kernel. It also builds ROCKNIX's
+# out-of-tree joypad driver, which that patch set's device tree binds to and
+# which is the board's only input device (analog sticks included).
 #
 # It must run BEFORE configure.sh, which generates the initramfs — an initrd
 # built against the old kernel's modules would not match the kernel it boots.
@@ -478,7 +480,7 @@ fi
 # into the builder), which is the only writable place that outlives the chroot.
 if [ -n "$RG35XX" ]; then
   KCACHE_KEY=$(cat ./scripts/build-kernel-rg35xx.sh ./dts/*.dts 2>/dev/null | sha256sum | cut -c1-16)
-  KCACHE_KEY="${KCACHE_KEY}-${KERNEL_COMMIT:-pin}-${ROCKNIX_COMMIT:-pin}-${RG35XX_KERNEL_PATCH_SKIP:-default}"
+  KCACHE_KEY="${KCACHE_KEY}-${KERNEL_VERSION:-pin}-${ROCKNIX_COMMIT:-pin}-${JOYPAD_COMMIT:-pin}-${RG35XX_KERNEL_PATCH_SKIP:-default}"
   KCACHE_KEY=$(printf '%s' "$KCACHE_KEY" | sha256sum | cut -c1-24)
   KCACHE_FILE="${KERNEL_CACHE_DIR}/rg35xx-kernel-${KCACHE_KEY}.tar.zst"
   if [ -f "$KCACHE_FILE" ]; then
@@ -493,8 +495,8 @@ if [ -n "$RG35XX" ]; then
     # gets one by inheriting the controlling terminal, which survives `env -i`
     # because it is a property of the process rather than of its environment.
     env -i HOME=/root \
-      KERNEL_COMMIT="${KERNEL_COMMIT:-}" KERNEL_SHA256="${KERNEL_SHA256:-}" \
-      ROCKNIX_COMMIT="${ROCKNIX_COMMIT:-}" \
+      KERNEL_VERSION="${KERNEL_VERSION:-}" KERNEL_SHA256="${KERNEL_SHA256:-}" \
+      ROCKNIX_COMMIT="${ROCKNIX_COMMIT:-}" JOYPAD_COMMIT="${JOYPAD_COMMIT:-}" \
       RG35XX_KERNEL_PATCH_SKIP="${RG35XX_KERNEL_PATCH_SKIP:-}" \
       arch-chroot $MOUNT_POINT sh -lc "bash /usr/lib/town-os/scripts/build-kernel-rg35xx.sh"
     mkdir -p "$KERNEL_CACHE_DIR"
