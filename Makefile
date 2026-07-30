@@ -95,11 +95,11 @@ VM_MEMORY   ?= 4G
 # vCPUs for the VMs (the dev VM and the emulated cross-arch build VM both take it).
 # QEMU defaults to 1, which starves CPU-count-scaled worker pools (e.g. rolodex's
 # tokio runtime) and leaves an emulated build's rustc/kernel compile single-file.
-# Default to three quarters of the host's cores: enough to behave like real
-# multi-core hardware, while leaving the host responsive (under TCG each vCPU is a
-# busy emulation thread). Falls back to 4 if nproc is unavailable, floors at 1.
-# Override with VM_CPUS=N.
-VM_CPUS     ?= $(shell n=$$(nproc 2>/dev/null || echo 4); c=$$(( n / 4 * 3 )); if [ "$$c" -lt 1 ]; then c=1; fi; echo "$$c")
+# Default to EVERY core the host has. This runs on a workstation, not a laptop,
+# and the emulated builds are long enough (hours of TCG) that holding cores back
+# for host responsiveness trades a real slowdown for a comfort nobody is present
+# to enjoy. Falls back to 4 if nproc is unavailable. Override with VM_CPUS=N.
+VM_CPUS     ?= $(shell nproc 2>/dev/null || echo 4)
 VM_BRIDGE   ?= virbr0
 VM_NAME     ?= town-os
 # Pin the VM to a specific IP via a libvirt DHCP reservation. Defaults to .50 on
@@ -275,7 +275,7 @@ help:
 	@echo '  VM_NAME          = $(VM_NAME)'
 	@echo '  VM_BRIDGE        = $(VM_BRIDGE)'
 	@echo '  VM_MEMORY        = $(VM_MEMORY)'
-	@echo '  VM_CPUS          = $(VM_CPUS)  (3/4 of the host'\''s cores; dev VM and the emulated build VM)'
+	@echo '  VM_CPUS          = $(VM_CPUS)  (every host core; dev VM and the emulated build VM)'
 	@echo '  VM_DISK_SIZE     = $(VM_DISK_SIZE)  (each of the four data disks)'
 	@echo '  VM_IP            = $(VM_IP)  (libvirt DHCP reservation;'
 	@echo '                   give each concurrently-running VM its own address)'
@@ -302,7 +302,7 @@ run: stop $(IMAGE)
 	  ${PWD}/make/run.sh $(IMAGE)
 
 IMAGE_SOURCES := $(wildcard make/install.sh make/image-container.sh make/Containerfile.build \
-                           dts/*.dts \
+                           dts/*.dts kernel/*.config \
                            make/image-aarch64.sh make/image-aarch64-guest.sh \
                            scripts/*.sh systemd/*.service systemd/*.timer \
                            initcpio/hooks/* initcpio/install/* town-os.yaml Makefile)

@@ -232,107 +232,37 @@ fi
 # moved or were renamed in between — on a board that cannot be recovered without
 # a soldering iron. arm64 defconfig is maintained in-tree for exactly this
 # kernel, boots on multiplatform arm64, and everything Town OS additionally
-# needs is asserted explicitly below and re-checked after olddefconfig.
+# needs is asserted by the fragment below and re-checked after olddefconfig.
+#
+# EVERY config decision lives in kernel/rg35xxpro.config, in git — both the
+# additions and (most of the wall-clock) the subtractions. arm64 defconfig is
+# the MULTIPLATFORM config, so out of the box this build spent hours compiling
+# MediaTek clocks, Tegra audio and UBIFS for a handheld that has none of them;
+# the fragment prunes the tree to this board. Read that file for the reasoning
+# per symbol. Override with RG35XX_KERNEL_CONFIG=<path> to test a variant
+# without editing the tracked one.
 make ARCH=arm64 defconfig
 
-# One scripts/config call PER SYMBOL: `scripts/config --enable A B` is not a
-# thing — the second symbol is parsed as a command, so it prints usage and exits
-# 1, which under `set -e` kills the build at the first config line.
-enable() { for s in "$@"; do ./scripts/config --file .config --enable "$s"; done; }
-module() { for s in "$@"; do ./scripts/config --file .config --module "$s"; done; }
-disable() { for s in "$@"; do ./scripts/config --file .config --disable "$s"; done; }
-
-# Root filesystem: read-only squashfs (zlib — see install.sh) + tmpfs overlay,
-# btrfs for /town-os, ext4 for the data partition, vfat for the boot partition.
-enable SQUASHFS SQUASHFS_ZLIB SQUASHFS_XATTR SQUASHFS_FILE_DIRECT \
-       OVERLAY_FS BTRFS_FS BTRFS_FS_POSIX_ACL EXT4_FS EXT4_FS_POSIX_ACL \
-       VFAT_FS FAT_DEFAULT_UTF8 NLS_CODEPAGE_437 NLS_ISO8859_1 NLS_UTF8 \
-       FUSE_FS BLK_DEV_LOOP AUTOFS_FS
-# systemd/podman substrate: namespaces, cgroups, seccomp, devtmpfs, xattrs.
-enable NAMESPACES USER_NS PID_NS NET_NS UTS_NS IPC_NS CGROUPS CGROUP_FREEZER \
-       CGROUP_PIDS CGROUP_DEVICE MEMCG CPUSETS SECCOMP SECCOMP_FILTER \
-       DEVTMPFS DEVTMPFS_MOUNT TMPFS TMPFS_POSIX_ACL TMPFS_XATTR \
-       FANOTIFY EPOLL SIGNALFD TIMERFD EVENTFD POSIX_MQUEUE
-# Networking: the container/WireGuard data path plus nftables.
-enable BRIDGE VETH TUN WIREGUARD IPV6 NF_TABLES NF_TABLES_INET NF_NAT \
-       NF_CONNTRACK NETFILTER_XTABLES NFT_CT NFT_NAT NFT_MASQ NFT_REDIR \
-       NFT_CHAIN_NAT IP_NF_IPTABLES IP_NF_NAT IP_NF_TARGET_MASQUERADE \
-       BRIDGE_NETFILTER VLAN_8021Q
-# Storage + USB on this board: the SD host, USB host/OTG, and USB mass storage
-# (the persistent btrfs lives on USB — mainline enables no second card slot).
-enable MMC MMC_BLOCK MMC_SUNXI PWRSEQ_SIMPLE PWRSEQ_EMMC \
-       USB USB_EHCI_HCD USB_EHCI_HCD_PLATFORM USB_OHCI_HCD \
-       USB_OHCI_HCD_PLATFORM USB_MUSB_HDRC USB_MUSB_SUNXI USB_MUSB_DUAL_ROLE \
-       PHY_SUN4I_USB USB_STORAGE USB_UAS
-# Input. The pad itself is the out-of-tree rocknix-singleadc-joypad module built
-# further down; everything it stands on is built IN, because it is the board's
-# only input device and the installer needs it in the initrd:
-#   INPUT_POLLDEV     the polled-input API it registers with (EXTRA_PATCHES).
-#   INPUT_FF_MEMLESS  it references input_ff_create_memless() unconditionally,
-#                     so the symbol must exist even though this board has no
-#                     rumble motor — otherwise the module fails to load.
-#   IIO/SUN20I_GPADC  the ADC the analog sticks are read through, behind the
-#                     GPIO-selected mux the driver walks.
-#   KEYBOARD_ADC      not for any button on this board: adc-keys is where the
-#                     patched kernel DEFINES and exports joypad_input_g, the
-#                     symbol the joypad module links against. Built out, the
-#                     module cannot load.
-#   KEYBOARD_GPIO     still needed: the volume buttons stay a gpio-keys node.
-enable KEYBOARD_GPIO INPUT_EVDEV INPUT_JOYDEV HID HID_GENERIC USB_HID \
-       INPUT_KEYBOARD INPUT_JOYSTICK INPUT_POLLDEV INPUT_FF_MEMLESS \
-       IIO IIO_BUFFER SUN20I_GPADC KEYBOARD_ADC
-module JOYSTICK_XPAD HID_SONY HID_PLAYSTATION HID_NINTENDO HID_STEAM \
-       HID_MICROSOFT HID_LOGITECH HID_LOGITECH_DJ HID_LOGITECH_HIDPP
-# THE POINT OF THIS BUILD: the display. DE33 mixer + TCON + the generic
-# MIPI-DPI/SPI panel driver (DRM_PANEL_MIPI, added by the patch set), the PWM
-# driver and PWM backlight the panel needs to be visible, and the fbdev
-# emulation + framebuffer console that turn it into /dev/tty0.
-enable DRM DRM_SUN4I DRM_SUN4I_BACKEND DRM_SUN8I_MIXER DRM_SUN8I_TCON_TOP \
-       DRM_PANEL DRM_PANEL_MIPI DRM_PANEL_BRIDGE DRM_FBDEV_EMULATION \
-       FB FB_CORE FRAMEBUFFER_CONSOLE FRAMEBUFFER_CONSOLE_DETECT_PRIMARY \
-       VT VT_CONSOLE PWM PWM_SUN20I BACKLIGHT_CLASS_DEVICE BACKLIGHT_PWM \
-       SPI SPI_GPIO SPI_SUN6I REGMAP_SPI
-# Board plumbing: PMIC/regulators the panel, WiFi and SD rails hang off, the
-# 8250 UART that is the serial console, thermal/watchdog, SRAM controller.
-enable MFD_AXP20X MFD_AXP20X_I2C REGULATOR REGULATOR_AXP20X AXP20X_POWER \
-       SUNXI_SRAM SUN8I_THERMAL SUNXI_WATCHDOG SERIAL_8250 SERIAL_8250_CONSOLE \
-       SERIAL_8250_DW SERIAL_OF_PLATFORM SUN50I_H616_CCU SUN50I_H6_R_CCU \
-       SUN8I_DE2_CCU RTC_DRV_SUN6I I2C_MV64XXX NVMEM_SUNXI_SID
-# WiFi: the RTL8821CS on SDIO, its firmware loader, and rfkill.
-module RTW88 RTW88_CORE RTW88_SDIO RTW88_8821C RTW88_8821CS RFKILL
-enable CFG80211 MAC80211 WLAN FW_LOADER CFG80211_CRDA_SUPPORT
-# USB Ethernet: the dependable way to get this box online (no Ethernet port).
-module USB_NET_DRIVERS USB_USBNET USB_NET_AX8817X USB_NET_AX88179_178A \
-       USB_NET_CDCETHER USB_NET_CDC_NCM USB_NET_RNDIS_HOST USB_RTL8152 \
-       USB_NET_SMSC95XX
-# virtio, purely so `make qemu-usb TARGET=rg35xxpro` can boot this exact kernel
-# under QEMU 'virt' and show the installer on an emulated screen — the closest
-# thing to a test rig this target has. Costs nothing on real hardware.
-enable VIRTIO VIRTIO_PCI VIRTIO_MMIO VIRTIO_BLK VIRTIO_NET VIRTIO_CONSOLE \
-       DRM_VIRTIO_GPU VIRTIO_INPUT SERIAL_AMBA_PL011 SERIAL_AMBA_PL011_CONSOLE
-# Modules are zstd-compressed to match Arch's tooling; debug info is dropped
-# (CONFIG_DEBUG_INFO_NONE) because it triples build time and image size for a
-# kernel nobody will run a debugger against, and BTF additionally needs pahole.
-enable MODULES MODULE_UNLOAD MODULE_COMPRESS_ZSTD
-disable DEBUG_INFO_BTF DEBUG_INFO_DWARF5
-enable DEBUG_INFO_NONE
-# CONFIG_WERROR is default-y in arm64 defconfig, and it CANNOT stay on with a
-# vendored patch stack: -Wmissing-prototypes and -Wunused-result are on by
-# default (scripts/Makefile.warn), and ROCKNIX's patches trip both — their
-# adc-keys change adds two non-static functions with no prototype, their OTG fix
-# calls regulator_enable() without checking it. With -Werror each of those is a
-# dead build, hours in, over a warning upstream never promised to avoid in
-# out-of-tree code. ROCKNIX's own H700 config has WERROR unset for the same
-# reason; this matches it.
-disable WERROR
+KCONFIG_FRAGMENT="${RG35XX_KERNEL_CONFIG:-/usr/lib/town-os/kernel/rg35xxpro.config}"
+if [ ! -f "$KCONFIG_FRAGMENT" ]; then
+  echo "kernel config fragment not found: $KCONFIG_FRAGMENT" >&2
+  echo "(install.sh stages kernel/ into the chroot at /usr/lib/town-os/kernel/)" >&2
+  exit 1
+fi
+# merge_config.sh -m merges without running a config pass, so olddefconfig below
+# is the single point where the kernel resolves dependencies. It prints
+# "Value of CONFIG_x is redefined by fragment" for every symbol we override —
+# that is the fragment doing its job, not a warning to chase.
+./scripts/kconfig/merge_config.sh -m -O . .config "$KCONFIG_FRAGMENT"
 
 make ARCH=arm64 olddefconfig
 
 # --- Verify the config actually says what we just asked for ------------------
-# `scripts/config --enable` on a symbol whose dependencies are unmet is a silent
-# no-op, and olddefconfig can turn a symbol back off. Everything below is
-# load-bearing for either booting or the point of this build, so check the
-# RESULT rather than trusting the request.
+# A fragment line for a symbol whose dependencies are unmet is a silent no-op —
+# merge_config.sh writes it, olddefconfig drops it, nothing complains. Everything
+# below is load-bearing for either booting or the point of this build, so check
+# the RESULT rather than trusting the request. This runs BEFORE the (very long)
+# compile, so a config mistake costs minutes, not hours.
 MUST_HAVE="SQUASHFS SQUASHFS_ZLIB OVERLAY_FS BTRFS_FS EXT4_FS VFAT_FS
            BLK_DEV_LOOP NAMESPACES USER_NS CGROUPS SECCOMP BRIDGE VETH TUN
            WIREGUARD NF_TABLES NF_NAT MMC_SUNXI MMC_BLOCK KEYBOARD_GPIO
@@ -340,7 +270,10 @@ MUST_HAVE="SQUASHFS SQUASHFS_ZLIB OVERLAY_FS BTRFS_FS EXT4_FS VFAT_FS
            PWM_SUN20I BACKLIGHT_PWM FRAMEBUFFER_CONSOLE DRM_FBDEV_EMULATION SPI_GPIO
            RTW88_8821CS CFG80211 MAC80211 REGULATOR_AXP20X SUN50I_H616_CCU
            VT_CONSOLE INPUT_KEYBOARD DRM_VIRTIO_GPU VIRTIO_INPUT
-           INPUT_POLLDEV INPUT_FF_MEMLESS IIO SUN20I_GPADC KEYBOARD_ADC"
+           INPUT_POLLDEV INPUT_FF_MEMLESS IIO SUN20I_GPADC KEYBOARD_ADC
+           ARCH_SUNXI BLK_DEV_SD USB_XHCI_HCD PCI_HOST_GENERIC
+           USB_RTL8152 USB_NET_AX88179_178A
+           SATA_AHCI"
 missing=""
 for sym in $MUST_HAVE; do
   grep -qE "^CONFIG_${sym}=(y|m)$" .config || missing="$missing $sym"
@@ -348,7 +281,34 @@ done
 if [ -n "$missing" ]; then
   echo "kernel config verification FAILED — not enabled after olddefconfig:$missing" >&2
   echo "(a symbol whose dependencies are unmet is silently dropped; check the" >&2
-  echo " patch set applied and that the symbol still exists in this kernel)" >&2
+  echo " patch set applied, that the symbol still exists in this kernel, and" >&2
+  echo " that kernel/rg35xxpro.config did not prune something it depends on)" >&2
+  exit 1
+fi
+
+# The other direction: confirm the pruning in kernel/rg35xxpro.config actually
+# took. These are the blocks that account for most of the build time, and a
+# rename upstream would silently put them back — turning a 40-minute emulated
+# build into the multi-hour one this fragment exists to end, with nothing in the
+# log to say why. Checking is free; noticing six hours in is not.
+#
+# Safe in the other direction too: a symbol that no longer exists reads as "not
+# enabled" and passes, so this can never fail the build over a rename alone.
+MUST_NOT_HAVE="ARCH_MEDIATEK ARCH_TEGRA ARCH_QCOM ARCH_ROCKCHIP ARCH_MESON
+               ARCH_EXYNOS ARCH_RENESAS ARCH_MXC ARCH_HISI
+               SND SOUND BT NFC MEDIA_SUPPORT INFINIBAND STAGING MTD
+               ETHERNET WLAN_VENDOR_ATH WLAN_VENDOR_MEDIATEK WLAN_VENDOR_INTEL
+               DRM_LIMA DRM_PANFROST VIRTUALIZATION COMPAT
+               NFS_FS CIFS XFS_FS UBIFS_FS SCSI_LOWLEVEL"
+unpruned=""
+for sym in $MUST_NOT_HAVE; do
+  ! grep -qE "^CONFIG_${sym}=(y|m)$" .config || unpruned="$unpruned $sym"
+done
+if [ -n "$unpruned" ]; then
+  echo "kernel config verification FAILED — should have been pruned but is enabled:$unpruned" >&2
+  echo "(something in kernel/rg35xxpro.config stopped taking effect — most likely" >&2
+  echo " a symbol renamed upstream, or a new defconfig entry selecting it. Left" >&2
+  echo " alone this silently restores the multi-hour multiplatform build.)" >&2
   exit 1
 fi
 echo "kernel config verification passed"

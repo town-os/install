@@ -55,15 +55,14 @@ BUILDER_VDISK_SIZE="${BUILDER_VDISK_SIZE:-32G}"
 VM_MEMORY="${VM_MEMORY:-8G}"
 # vCPUs for the build VM. The dominant cost is compiling — ttyforce via rustc, and
 # on the RG35XX target a whole kernel — all of which parallelize across cores, so
-# give the guest a good share of the host (three quarters of its CPUs, min 4),
-# leaving enough behind that the host stays usable during a multi-hour build.
-# Multi-threaded TCG (below) makes these vCPUs actually run concurrently. The
-# Makefile passes VM_CPUS in, so this default applies to direct invocation;
-# override with VM_CPUS=.
+# give the guest the whole host (every core, min 4). This is a workstation and a
+# TCG build runs for hours, so reserving cores for interactive responsiveness costs
+# real wall-clock for a comfort nobody is sitting there to enjoy. Multi-threaded TCG
+# (below) makes these vCPUs actually run concurrently. The Makefile passes VM_CPUS
+# in, so this default applies to direct invocation; override with VM_CPUS=.
 _host_cpus="$(nproc 2>/dev/null || echo 4)"
-_default_cpus=$(( _host_cpus / 4 * 3 ))
-if [ "$_default_cpus" -lt 4 ]; then _default_cpus=4; fi
-VM_CPUS="${VM_CPUS:-$_default_cpus}"
+if [ "$_host_cpus" -lt 4 ]; then _host_cpus=4; fi
+VM_CPUS="${VM_CPUS:-$_host_cpus}"
 
 # ALARM package repo the kernel is pulled from (download + extract only — no
 # aarch64 code runs on the host).

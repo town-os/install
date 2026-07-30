@@ -8,14 +8,10 @@ VM_MEMORY="${VM_MEMORY:?VM_MEMORY is required}"
 # their worker pools to the CPU count — notably rolodex, whose tokio runtime is
 # left unpinned so it scales to the machine (1 vCPU -> 1 worker -> cold recursive
 # lookups serialize and time out under load). Give the dev VM several cores so it
-# behaves like real multi-core hardware; override with VM_CPUS=N. Defaults to three
-# quarters of the host's cores — enough to look like real hardware while leaving the
-# host responsive, which matters on the foreign-arch (TCG) paths where every vCPU is
-# a busy emulation thread. Falls back to 4 where nproc isn't available.
-_host_cpus="$(nproc 2>/dev/null || echo 4)"
-_default_cpus=$(( _host_cpus / 4 * 3 ))
-if [ "$_default_cpus" -lt 1 ]; then _default_cpus=1; fi
-VM_CPUS="${VM_CPUS:-$_default_cpus}"
+# behaves like real multi-core hardware; override with VM_CPUS=N. Defaults to every
+# core the host has (this builds/runs on a workstation, not a laptop), falling back
+# to 4 where nproc isn't available.
+VM_CPUS="${VM_CPUS:-$(nproc 2>/dev/null || echo 4)}"
 VM_BRIDGE="${VM_BRIDGE:?VM_BRIDGE is required}"
 FOREGROUND="${FOREGROUND:-0}"
 

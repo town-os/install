@@ -422,6 +422,13 @@ if [ -d ./dts ]; then
   mkdir -p "$MOUNT_POINT/usr/lib/town-os/dts"
   rsync -a ./dts/ "$MOUNT_POINT/usr/lib/town-os/dts/"
 fi
+# Kernel config fragments (kernel/rg35xxpro.config) — build-kernel-rg35xx.sh
+# merges one onto arm64 defconfig. Staged like dts/ because the kernel build
+# runs inside the chroot and cannot reach the repo.
+if [ -d ./kernel ]; then
+  mkdir -p "$MOUNT_POINT/usr/lib/town-os/kernel"
+  rsync -a ./kernel/ "$MOUNT_POINT/usr/lib/town-os/kernel/"
+fi
 
 # --- Make the chroot's pacman keyring usable before anything installs into it ---
 # The RG35XX build is the ONLY path in this repo that runs `pacman -S` inside the
@@ -474,13 +481,31 @@ fi
 #
 # CACHED, because this is by far the most expensive step in the whole build
 # (hours under emulation) and its inputs are fully pinned: the cache key is the
-# hash of the build script itself, our device tree, and any pin overrides, so any
-# change to those misses the cache and rebuilds, while a repeat build of the same
-# pins extracts in seconds. The cache lives in the repo (bind-mounted/9p-shared
-# into the builder), which is the only writable place that outlives the chroot.
+# hash of the build script itself, the kernel config fragment, our device tree,
+# and any pin overrides, so any change to those misses the cache and rebuilds,
+# while a repeat build of the same pins extracts in seconds. The cache lives in
+# the repo (bind-mounted/9p-shared into the builder), which is the only writable
+# place that outlives the chroot.
+#
+# kernel/*.config MUST stay in this hash: it is now where every config decision
+# lives, so leaving it out would let an edited config silently reuse a kernel
+# built from the previous one — the worst kind of stale, since the .config that
+# produced the cached modules is not the one in the tree.
 if [ -n "$RG35XX" ]; then
-  KCACHE_KEY=$(cat ./scripts/build-kernel-rg35xx.sh ./dts/*.dts 2>/dev/null | sha256sum | cut -c1-16)
+  KCACHE_KEY=$(cat ./scripts/build-kernel-rg35xx.sh ./kernel/*.config ./dts/*.dts 2>/dev/null | sha256sum | cut -c1-16)
   KCACHE_KEY="${KCACHE_KEY}-${KERNEL_VERSION:-pin}-${ROCKNIX_COMMIT:-pin}-${JOYPAD_COMMIT:-pin}-${RG35XX_KERNEL_PATCH_SKIP:-default}"
+  # RG35XX_KERNEL_CONFIG names a path INSIDE the chroot, so the normal way to use
+  # it is to drop a variant into kernel/ (everything there is staged to
+  # /usr/lib/town-os/kernel/) and point at that — in which case ./kernel/*.config
+  # above already hashed it and the cache key is correct with no extra work.
+  # Fold in the path itself so two variants staged side by side can't collide on
+  # one cache entry, and hash the content as well on the off chance the override
+  # resolves to a real file on the host too.
+  if [ -n "${RG35XX_KERNEL_CONFIG:-}" ]; then
+    KCACHE_KEY="${KCACHE_KEY}-${RG35XX_KERNEL_CONFIG}"
+    [ -f "${RG35XX_KERNEL_CONFIG}" ] &&
+      KCACHE_KEY="${KCACHE_KEY}-$(sha256sum "${RG35XX_KERNEL_CONFIG}" | cut -c1-16)"
+  fi
   KCACHE_KEY=$(printf '%s' "$KCACHE_KEY" | sha256sum | cut -c1-24)
   KCACHE_FILE="${KERNEL_CACHE_DIR}/rg35xx-kernel-${KCACHE_KEY}.tar.zst"
   if [ -f "$KCACHE_FILE" ]; then
@@ -498,6 +523,7 @@ if [ -n "$RG35XX" ]; then
       KERNEL_VERSION="${KERNEL_VERSION:-}" KERNEL_SHA256="${KERNEL_SHA256:-}" \
       ROCKNIX_COMMIT="${ROCKNIX_COMMIT:-}" JOYPAD_COMMIT="${JOYPAD_COMMIT:-}" \
       RG35XX_KERNEL_PATCH_SKIP="${RG35XX_KERNEL_PATCH_SKIP:-}" \
+      RG35XX_KERNEL_CONFIG="${RG35XX_KERNEL_CONFIG:-}" \
       arch-chroot $MOUNT_POINT sh -lc "bash /usr/lib/town-os/scripts/build-kernel-rg35xx.sh"
     mkdir -p "$KERNEL_CACHE_DIR"
     print_info "Caching the built kernel as $KCACHE_FILE"
