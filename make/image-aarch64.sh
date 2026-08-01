@@ -364,17 +364,37 @@ if [ "$STATUS" = "BUILD_OK" ] && [ -e "$REPO_ROOT/$IMAGE" ]; then
     sudo chown "$SUDO_USER" "$REPO_ROOT/$IMAGE" 2>/dev/null || true
   fi
   log "Done: $IMAGE (aarch64, built under emulation)."
+elif [ "$STATUS" = "BUILD_FAIL" ]; then
+  # A REPORTED failure means the guest reached make/image-aarch64-guest.sh's
+  # finish(), which ends every exit path with an emergency sync and a read-only
+  # remount of every filesystem — so this disk is consistent on disk, not the
+  # half-written one the discard below exists for. Its keyring is also
+  # re-verified (and rebuilt from scratch if it doesn't fully check out) on the
+  # next boot, so the "GPGME error: No data" failure mode is caught there rather
+  # than being avoided by throwing the disk away.
+  #
+  # Keeping it is worth real time: the toolchain provision is a slow one-time
+  # pacman run under TCG, and the disk also carries /root/build with the staged
+  # repo and the pacman package cache. The one artifact that MUST survive
+  # regardless — the patched H700 kernel — is exported to $REPO_ROOT/.kernel-cache
+  # by the guest on every exit path, so it is safe either way.
+  log "Build failed — KEEPING the cached build-env (the guest shut it down cleanly): $BUILD_ENV"
+  log "  Delete it by hand to re-provision from scratch: rm -rf $BUILD_ENV"
+  die "aarch64 build did not complete (status: $STATUS).
+  The build runs over the serial console above — scroll up for the failure.
+  The build-env was kept, so the next 'make image' reuses the toolchain (and any
+  cached kernel in .kernel-cache) instead of re-provisioning."
 else
-  # NEVER preserve the cached build-env across a failure. A failed build leaves
-  # the builder disk dirty: the guest is force-powered-off with the ext4 root
-  # still mounted rw (cache=writeback), so its pacman DBs and gnupg keyring can
-  # be left half-written. Reusing that disk makes the NEXT build fail at
-  # `pacman -Sy` with "GPGME error: No data / invalid or corrupted database (PGP
-  # signature)" even though the keyring provisioned fine originally. Discard the
-  # whole cache so the next run rebuilds and re-provisions from a clean rootfs.
-  log "Build failed — discarding cached build-env so the next run starts clean: $BUILD_ENV"
+  # No status at all: qemu died, the guest kernel panicked, or the host killed
+  # it — the disk was never brought to rest. It is powered off still mounted rw
+  # (cache=writeback), so its pacman DBs and gnupg keyring can be left
+  # half-written, and reusing it makes the NEXT build fail at `pacman -Sy` with
+  # "GPGME error: No data / invalid or corrupted database (PGP signature)" even
+  # though the keyring provisioned fine originally. Discard the whole cache so
+  # the next run re-provisions from a clean rootfs.
+  log "Build did not report a status — discarding the cached build-env: $BUILD_ENV"
   sudo rm -rf "$BUILD_ENV" 2>/dev/null || rm -rf "$BUILD_ENV"
   die "aarch64 build did not complete (status: $STATUS).
   The build runs over the serial console above — scroll up for the failure.
-  The cached build-env was discarded; the next 'make image-aarch64' re-provisions from scratch."
+  The cached build-env was discarded; the next 'make image' re-provisions from scratch."
 fi

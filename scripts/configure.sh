@@ -134,6 +134,18 @@ if [ -n "${TTYFORCE_DEV:-}" ]; then
 else
   cargo install ttyforce
 fi
+
+# Which version cargo actually installed. ASK CARGO, NOT THE BINARY: ttyforce's
+# clap `Cli` declares no `version`, so `ttyforce --version` is an unknown
+# argument — it exits 2 with its complaint on stderr. Under this script's
+# `set -e -o pipefail` that made the assignment below fail and killed the whole
+# build silently (stderr was going to /dev/null), hours in, right after the
+# kernel and U-Boot were built. `cargo install --list` reports the version for
+# both install paths (crates.io: "ttyforce v0.5.1:"; --git: "ttyforce v0.5.1
+# (https://...#sha):") and cannot be broken by the binary's CLI. Never let this
+# assignment abort the build — an unparseable version is reported below, loudly.
+TTYFORCE_HAVE=$(cargo install --list 2>/dev/null | sed -n 's/^ttyforce v\([^ :]*\).*/\1/p' | head -1) || true
+
 mv /root/.cargo/bin/ttyforce /usr/bin
 
 # The RG35XX has no keyboard and no serial console, so the ONLY way to type a
@@ -144,11 +156,11 @@ mv /root/.cargo/bin/ttyforce /usr/bin
 # user halfway through the installer. Check it here instead.
 if [ -n "${RG35XX:-}" ]; then
   TTYFORCE_MIN=0.5.1
-  TTYFORCE_HAVE=$(/usr/bin/ttyforce --version 2>/dev/null | awk '{ print $NF }')
   if [ -z "$TTYFORCE_HAVE" ] \
      || [ "$(printf '%s\n%s\n' "$TTYFORCE_MIN" "$TTYFORCE_HAVE" | sort -V | head -1)" != "$TTYFORCE_MIN" ]; then
-    echo "ttyforce ${TTYFORCE_HAVE:-unknown} is too old for this board:" >&2
-    echo "the on-screen keyboard (>= ${TTYFORCE_MIN}) is the only way to enter text on it." >&2
+    echo "installed ttyforce version is '${TTYFORCE_HAVE:-unknown}', need >= ${TTYFORCE_MIN}:" >&2
+    echo "the on-screen keyboard (>= ${TTYFORCE_MIN}) is the only way to enter text on this board." >&2
+    echo "(version comes from 'cargo install --list')" >&2
     exit 1
   fi
   echo "ttyforce ${TTYFORCE_HAVE}: on-screen keyboard available"

@@ -107,16 +107,46 @@ run_build() {
   fi
 }
 
+# Push the patched-kernel cache onto the 9p share, i.e. into the host's repo dir.
+#
+# The H700 kernel is by far the most expensive thing this VM does — hours under
+# TCG — and make/install.sh already caches it as a content-keyed tarball under
+# .kernel-cache/. But install.sh runs against /root/build, the LOCAL copy of the
+# repo on the build-env disk, so the tarball it writes lives on a disk the host
+# may delete after the run. Anything failing AFTER the kernel (configure.sh,
+# U-Boot, squashfs) therefore threw the kernel away with it and the retry
+# rebuilt it from scratch.
+#
+# So export it on EVERY exit path, success or failure: .kernel-cache in the repo
+# dir outlives the build-env entirely, and the next run's rsync stages it back
+# in, where install.sh finds it by key and skips the build. Entries are
+# content-keyed, so one already on the host is already correct — --ignore-existing
+# keeps this from re-copying hundreds of MB over 9p every time.
+export_kernel_cache() {
+  [ -d /root/build/.kernel-cache ] || return 0
+  [ -n "$(ls -A /root/build/.kernel-cache 2>/dev/null)" ] || return 0
+  mkdir -p /mnt/repo/.kernel-cache 2>/dev/null || return 0
+  say "Exporting .kernel-cache to the host (outlives a discarded build-env)"
+  rsync -a --ignore-existing /root/build/.kernel-cache/ /mnt/repo/.kernel-cache/ \
+    > "$CONSOLE" 2>&1 || say "WARNING: could not export .kernel-cache — the next build recompiles the kernel"
+}
+
 finish() {
   status="$1"
   mkdir -p /mnt/repo/.build-env 2>/dev/null || true
   printf '%s\n' "$status" > /mnt/repo/.build-env/guest-status 2>/dev/null || true
+  # Everything that has to reach the HOST goes over 9p here, while the share is
+  # still mounted — the status above, and the kernel cache (see above: it is what
+  # makes a failure after the kernel cost minutes rather than hours).
+  export_kernel_cache
   # Report status over the 9p share FIRST, then bring the ext4 build-env disk to
   # a consistent on-disk state before the forced poweroff. Without this the disk
   # is powered off mounted rw (cache=writeback), leaving pacman/gnupg files
-  # half-written so the cached disk fails the NEXT build at `pacman -Sy`. The
-  # host discards the cache on failure anyway, but a clean shutdown means a
-  # SUCCESSFUL build's cache is reusable too. sysrq 's' = emergency sync, 'u' =
+  # half-written so the cached disk fails the NEXT build at `pacman -Sy`. This
+  # is exactly why make/image-aarch64.sh KEEPS the build-env whenever a status
+  # was reported and discards it only when none was: reaching this point at all
+  # is what makes the disk reusable, whether the build passed or failed.
+  # sysrq 's' = emergency sync, 'u' =
   # remount every filesystem read-only (works even with sub-mounts still busy,
   # which a plain `mount -o remount,ro /` cannot).
   sync
@@ -222,11 +252,20 @@ fi
 # loop-mounts that image. 9p cannot reliably back a loop device, so build on the
 # local ext4 and export the result afterward. Exclude the host's images and the
 # build-env cache from the copy.
+#
+# .kernel-cache is deliberately NOT excluded: this is the inbound half of the
+# kernel cache (export_kernel_cache above is the outbound half), so a kernel
+# built by an earlier run arrives here and install.sh reuses it by key instead of
+# spending hours rebuilding it. The `P` (protect) filter is the belt to that
+# brace: entries already on this disk are never deleted by --delete even if the
+# host's copy is missing one, so a kernel survives here too when a preserved
+# build-env is reused after a failure.
 say "Staging repo -> /root/build"
 mkdir -p /root/build
 rsync -a --delete \
   --exclude '.git' --exclude '.build-env' --exclude '.claude' \
   --exclude '*.img' --exclude '*.img.*' --exclude '*.raw' \
+  --filter 'P .kernel-cache/**' \
   /mnt/repo/ /root/build/ >/dev/console 2>&1 || finish BUILD_FAIL
 
 cd /root/build || finish BUILD_FAIL
