@@ -302,7 +302,7 @@ run: stop $(IMAGE)
 	  ${PWD}/make/run.sh $(IMAGE)
 
 IMAGE_SOURCES := $(wildcard make/install.sh make/image-container.sh make/Containerfile.build \
-                           dts/*.dts kernel/*.config \
+                           make/base-packages.txt dts/*.dts kernel/*.config \
                            make/image-aarch64.sh make/image-aarch64-guest.sh \
                            scripts/*.sh systemd/*.service systemd/*.timer \
                            initcpio/hooks/* initcpio/install/* town-os.yaml Makefile)

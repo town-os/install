@@ -168,6 +168,31 @@ fi
 
 rm -rf $HOME/.cargo/registry
 
+# Point the pacstrapped kernel's preset at the kernel that is actually installed.
+#
+# ALARM's linux-aarch64 preset pins a LITERAL version string (ALL_kver=
+# "7.1.5-2-aarch64-ARCH"), and on the RG35XX build that package's kernel is gone:
+# build-kernel-rg35xx.sh replaces /usr/lib/modules wholesale with the patched
+# H700 kernel's modules so nothing is ambiguous about which kernel we build an
+# initrd for. `mkinitcpio -P` iterates every preset regardless, so it then tried
+# to build for a module tree that no longer exists and hard-failed with
+# "'/lib/modules/<alarm kver>' is not a valid kernel module directory" — hours in,
+# after the kernel, U-Boot and ttyforce were all built.
+#
+# $KVER above came from the module tree itself, so it names the kernel whose
+# /boot/Image the board will boot; rewrite the presets to it. The preset's
+# default_image (/boot/initramfs-linux.img) is what install.sh stages onto the
+# FAT partition and what extlinux.conf's INITRD line names, so the filename must
+# NOT change — only the version this initrd is built for.
+if [ -n "${RG35XX:-}" ]; then
+  for preset in /etc/mkinitcpio.d/*.preset; do
+    [ -f "$preset" ] || continue
+    # ALL_kver, plus any per-preset <name>_kver that would override it.
+    sed -i "s|^\([A-Za-z0-9_]*\)_kver=.*|\1_kver=\"$KVER\"|" "$preset"
+    echo "mkinitcpio: $preset retargeted to kernel $KVER"
+  done
+fi
+
 mkinitcpio -P
 
 # --- Verify the initrd carries what the hardware needs ---

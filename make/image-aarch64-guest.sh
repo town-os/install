@@ -127,7 +127,17 @@ export_kernel_cache() {
   [ -n "$(ls -A /root/build/.kernel-cache 2>/dev/null)" ] || return 0
   mkdir -p /mnt/repo/.kernel-cache 2>/dev/null || return 0
   say "Exporting .kernel-cache to the host (outlives a discarded build-env)"
-  rsync -a --ignore-existing /root/build/.kernel-cache/ /mnt/repo/.kernel-cache/ \
+  # --no-owner --no-group is REQUIRED, not tidiness: the share is exported with
+  # security_model=none, so the 9p server is the host's *unprivileged* qemu
+  # process and every file it creates is owned by the invoking user. rsync runs
+  # as root in here, so plain -a tries to chown each entry (and the destination
+  # directory itself) back to 0:0 — which the host user cannot do. That is EPERM
+  # on the very first item, rsync exits 23, and the warning below fires: the
+  # kernel cache never reaches the host and the next build spends hours
+  # recompiling it. Nothing is lost by dropping it: the host wants these owned by
+  # the invoking user, which is exactly who the 9p server creates them as.
+  rsync -a --no-owner --no-group --ignore-existing \
+    /root/build/.kernel-cache/ /mnt/repo/.kernel-cache/ \
     > "$CONSOLE" 2>&1 || say "WARNING: could not export .kernel-cache — the next build recompiles the kernel"
 }
 

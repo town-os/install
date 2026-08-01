@@ -11,6 +11,13 @@ base
 base-devel
 clang
 linux-firmware
+# regulatory.db (+ .p7s), which cfg80211 loads before it will let a radio use
+# anything but the restrictive built-in world domain. It is NOT part of
+# linux-firmware — Arch splits it out and every wireless package lists it only as
+# an OPTIONAL dependency, so nothing here pulled it in and the RG35XX initrd came
+# out without it (caught by configure.sh's verify_initrd, since WiFi is that
+# board's only network).
+wireless-regdb
 podman
 efibootmgr
 grub
