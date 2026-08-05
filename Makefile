@@ -69,7 +69,7 @@ IMAGE_SIZE       ?= 12G
 # Where the *-log build targets tee their transcript (`make image-log`, and any
 # other `make <target>-log` — see the %-log pattern rule). A build always leaves
 # a full log here even when it fails: the recipe captures the exit code through
-# the tee pipe. Same facility as town-os's `test-full-log`.
+# the tee pipe.
 LOG_DIR          ?= /tmp/town-os-install/log
 # Image tags are arch-suffixed (rc.latest-x86_64 / rc.latest-aarch64): each
 # repository publishes per-arch tags rather than a multi-arch manifest. Builds
@@ -174,14 +174,26 @@ UBOOT_BIN ?=
 # bootloaders are staged on the card so the other can be written by hand.
 RG35XX_DRAM ?=
 
-.PHONY: help run run-release stop image image-release compress-release build-installer push-installer qemu qemu-fg qemu-usb \
+# Held in a variable rather than written straight onto `.PHONY` so the `%-log`
+# pattern rule can check its stem against it (see LOGGABLE_TARGETS below) — a
+# target added here keeps getting its `-log` variant for free.
+PHONY_TARGETS := help run run-release stop image image-release compress-release build-installer push-installer qemu qemu-fg qemu-usb \
         qemu-release virtualbox virtualbox-fg virtualbox-release \
         stop-qemu stop-virtualbox vm-ip serial clean clean-images \
         cleanup-loopback deps deps-debian release flash rebuild-qemu image-container
+
+.PHONY: $(PHONY_TARGETS)
 # NOTE: no *-log target may be listed above. `make <target>-log` is served by the
 # `%-log` pattern rule (below, next to `image:`), and GNU make skips the
 # implicit-rule search entirely for .PHONY targets — listing image-log here makes
 # it match nothing and fail with "No rule to make target 'image-log'".
+
+# What `make <target>-log` will log: every phony target plus the two real file
+# targets the build chain hangs off. The `%-log` rule matches ANY name ending in
+# `-log` (a pattern rule with no prerequisites matches anything), so a stem that
+# is no target here still reaches the recipe; anything not in this list is run
+# unlogged so make reports it itself, instead of a log being opened for it.
+LOGGABLE_TARGETS := $(PHONY_TARGETS) $(IMAGE) $(IMAGE).bz2
 
 help:
 	@echo 'Town OS Install — Makefile targets'
@@ -190,9 +202,11 @@ help:
 	@echo '  image            Build the disk image for TARGET (default: native host arch)'
 	@echo '                   TARGET=x86_64|aarch64|rpi|rg35xxpro; non-x86 targets emulate'
 	@echo '                   on an x86 host'
-	@echo '  <target>-log     Any build target, tee'\''d into a timestamped log under $(LOG_DIR)'
+	@echo '  <target>-log     A loggable target, tee'\''d into a timestamped log under $(LOG_DIR)'
 	@echo '                   (image-log, image-release-log, release-log, ...); the log is'
-	@echo '                   kept when the build fails, and named for the arch/flavor'
+	@echo '                   kept when the build fails, and named for the arch/flavor.'
+	@echo '                   Any other name ending in -log is an error. Loggable:'
+	@printf '%s\n' '$(LOGGABLE_TARGETS)' | fold -s -w 58 | sed -e 's/[[:space:]]*$$//' -e 's/^/                     /'
 	@echo '  image-container  Force the same-arch Arch container build path (native only)'
 	@echo '  image-release    Build the image and compress it to .bz2'
 	@echo '  build-installer  Build the installer OCI image from town-os.img.bz2 (no push)'
@@ -361,9 +375,8 @@ image: $(IMAGE)
 
 # `make <target>-log` runs `make <target>` with the whole transcript tee'd into a
 # timestamped file under $(LOG_DIR) — `make image-log`, `make image-release-log`,
-# `make release-log`, `make image-container-log`. Same facility as town-os's
-# `test-full-log`, generalized to a pattern rule so a new build target gets its
-# logged variant for free.
+# `make release-log`, `make image-container-log`. It is a pattern rule so a new
+# build target gets its logged variant for free.
 #
 # The log is always written even when the build FAILS, which is the case that
 # matters: `set -o pipefail` makes the pipeline carry make's exit status rather
@@ -389,8 +402,23 @@ image: $(IMAGE)
 #
 # Pattern rules are skipped for .PHONY targets, so nothing matched by this may be
 # listed there.
+#
+# The stem is checked against $(LOGGABLE_TARGETS) FIRST, before the log file or
+# the -latest symlink are created — this rule is the Makefile's only wildcard and
+# matches ANY name ending in `-log`, so a stem that is no target here reaches the
+# recipe too. Such a stem exits 2 pointing at `make help`, and leaves nothing
+# behind, rather than creating a log and the -latest symlink and printing two
+# lines that read like a build that had started. Pointing at `make help` is the
+# whole reason this doesn't just forward the stem to a sub-make: make's own "No
+# rule to make target `<stem>'" names the STEM, not what was typed, and says
+# nothing about where the real target list is.
 %-log:
 	@bash -c 'set -o pipefail; \
+	  if [ -z "$(filter $*,$(LOGGABLE_TARGETS))" ]; then \
+	    echo "make: $* is not a target here, so there is nothing for $*-log to log." >&2; \
+	    echo "make: run \"make help\" for the targets, loggable ones included." >&2; \
+	    exit 2; \
+	  fi; \
 	  mkdir -p "$(LOG_DIR)"; \
 	  stem="$*-$(BUILD_ARCH)$(IMAGE_FLAVOR)"; \
 	  logfile="$(LOG_DIR)/$$stem-$$(date +%Y%m%d-%H%M%S).log"; \
