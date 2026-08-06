@@ -66,6 +66,29 @@ IMAGE_BUILDER := $(if $(EMULATE),make/image-aarch64.sh,make/image.sh)
 IMAGE_FLAVOR     := $(if $(RPI),-rpi)$(if $(RG35XX),-rg35xxpro)
 IMAGE            ?= town-os-$(BUILD_DATE)-$(BUILD_ARCH)$(IMAGE_FLAVOR).img
 IMAGE_SIZE       ?= 12G
+
+# What `flash` actually writes -- NOT necessarily $(IMAGE).
+#
+# Every image filename carries the date it was built, so AT MIDNIGHT $(IMAGE)
+# silently renames itself and last night's perfectly good image becomes
+# invisible to make. `make flash` at 00:24 then sees "no image" and starts an
+# hours-long rebuild instead of writing the file sitting right there -- the
+# exact opposite of what flashing is for. Builds still stamp today's date (that
+# is the whole point of the name); only flash gets to reach back:
+#   $(IMAGE) when it exists -> otherwise the newest existing image of the SAME
+#   arch/flavor (names sort by ISO date, so lexical max == newest) -> and only a
+#   directory with none at all falls back to building.
+# The glob is arch- and flavor-exact, so a `TARGET=rg35xxpro` flash can never
+# pick up the x86_64 image (or vice versa).
+#
+# An explicitly-set IMAGE is left ALONE: `IMAGE=foo.img make flash` must fail on
+# a missing foo.img, never quietly write some other file to a USB stick.
+ifeq ($(origin IMAGE),file)
+EXISTING_IMAGES  := $(sort $(wildcard town-os-*-$(BUILD_ARCH)$(IMAGE_FLAVOR).img))
+FLASH_IMAGE      := $(if $(wildcard $(IMAGE)),$(IMAGE),$(if $(EXISTING_IMAGES),$(lastword $(EXISTING_IMAGES)),$(IMAGE)))
+else
+FLASH_IMAGE      := $(IMAGE)
+endif
 # Where the *-log build targets tee their transcript (`make image-log`, and any
 # other `make <target>-log` — see the %-log pattern rule). A build always leaves
 # a full log here even when it fails: the recipe captures the exit code through
@@ -242,7 +265,7 @@ help:
 	@echo '  virtualbox-fg    Build if stale, launch a VirtualBox VM in the foreground'
 	@echo
 	@echo 'Flash:'
-	@echo '  flash            Build if stale, write the image to a USB device (USB_DEV=/dev/sdX)'
+	@echo '  flash            Write the image to a USB device (USB_DEV=/dev/sdX); builds only if absent'
 	@echo
 	@echo 'Stop:'
 	@echo '  stop             Stop all VMs for this image/name'
@@ -580,8 +603,20 @@ clean-images:
 cleanup-loopback:
 	${PWD}/make/cleanup-loopback.sh
 
-flash: $(IMAGE)
-	${PWD}/make/flash.sh $(IMAGE)
+# flash builds ONLY when there is no image to write at all -- see FLASH_IMAGE up
+# top, which is $(IMAGE) or, once the date has rolled over, the newest existing
+# image of this arch/flavor. Flashing must never rebuild: install.sh deletes its
+# output before it starts (it needs a fresh sparse file to loop-mount), so a
+# plain `flash: $(IMAGE)` meant that touching any source file -- or merely
+# flashing after midnight -- turned `make flash` into "delete the image, then
+# spend hours rebuilding it", stick still unwritten. An order-only prerequisite
+# is NOT enough here: order-only only stops the prerequisite's timestamp from
+# forcing flash's recipe, make still updates $(IMAGE) itself when it is stale.
+# The $(wildcard) test drops the prerequisite entirely once a file is present,
+# so staleness is never consulted. Run `make image` first for a fresh one.
+flash: $(if $(wildcard $(FLASH_IMAGE)),,$(FLASH_IMAGE))
+	@[ "$(FLASH_IMAGE)" = "$(IMAGE)" ] || echo 'Note: $(IMAGE) does not exist; flashing the newest existing image instead. Run "make image" first for a fresh one.'
+	${PWD}/make/flash.sh $(FLASH_IMAGE)
 
 # Build, compress, and push the installer image for TARGET (default: native host
 # arch, honoring RPI=1). TARGET is resolved at the top of this Makefile into
