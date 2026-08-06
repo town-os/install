@@ -2,7 +2,14 @@
 
 Arch-based disk image builder for Town OS. Produces a bootable raw image with a read-only squashfs root, tmpfs overlay, and custom initrd hooks for hardware provisioning.
 
-## Build & Run
+## Git Remotes
+
+**This repo has TWO remotes, and a push goes to BOTH — every time.** `origin` is `gitea.com/town-os/install` (the branch's upstream) and `github` is `github.com/town-os/install`. Pushing only one leaves the other behind, which is invisible until someone clones the stale one. Don't infer the set from `origin` alone; read `git remote` and push each:
+
+```sh
+git push origin main
+git push github main
+```
 
 ```sh
 make deps        # install host dependencies (Arch Linux)
