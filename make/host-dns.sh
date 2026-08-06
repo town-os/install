@@ -38,12 +38,24 @@ case "${MODE}" in
   *) echo "usage: $0 set|unset" >&2; exit 2 ;;
 esac
 
-DROPIN_DIR=/run/systemd/resolved.conf.d
+# These paths (and RESOLV_CONF/STUB below) are overridable purely so the
+# set/unset cycle can be exercised against scratch files instead of the live
+# host — nothing in the Makefile ever sets them.
+DROPIN_DIR="${DROPIN_DIR:-/run/systemd/resolved.conf.d}"
 # 'zz-' sorts after anything the host distro ships, so this list is applied last.
 DROPIN="${DROPIN_DIR}/zz-town-os-vm.conf"
 # Remember which link we stripped, so `unset` reverts THAT one even if the
 # default route has since moved (WiFi roam, VPN, dock).
-STATE=/run/town-os-host-dns.link
+STATE="${STATE:-/run/town-os-host-dns.link}"
+
+# resolv.conf handling (same testing seam as above).
+RESOLV_CONF="${RESOLV_CONF:-/etc/resolv.conf}"
+STUB="${STUB:-/run/systemd/resolve/stub-resolv.conf}"
+# What resolv.conf was before we touched it: "link:<target>" or "file" (with the
+# original bytes alongside). Restoring the TYPE matters — a host whose file we
+# replaced with a symlink must get its file back, not a dangling link.
+RESOLV_STATE="${RESOLV_STATE:-/run/town-os-host-dns.resolv}"
+RESOLV_BAK="${RESOLV_STATE}.bak"
 
 # systemd-resolved is not universal (a host on plain resolv.conf, or NM's own
 # dnsmasq). Don't fail a VM launch over it — say so and move on.
@@ -63,7 +75,8 @@ fi
 # `unset` unconditionally, so without this early exit every `make stop` would
 # prompt for a password just to discover there was no switch to reverse. Both
 # paths live in /run and are world-readable, so the test needs no privilege.
-if [ "${MODE}" = "unset" ] && [ ! -f "${DROPIN}" ] && [ ! -f "${STATE}" ]; then
+if [ "${MODE}" = "unset" ] && [ ! -f "${DROPIN}" ] && [ ! -f "${STATE}" ] \
+   && [ ! -f "${RESOLV_STATE}" ]; then
   exit 0
 fi
 
@@ -84,6 +97,29 @@ reload_resolved() {
 
 if [ "${MODE}" = "unset" ]; then
   changed=0
+  # Put resolv.conf back FIRST — restoring the host's own resolver path before
+  # tearing down the servers it points at keeps the gap from being a window with
+  # no working DNS at all.
+  if [ -f "${RESOLV_STATE}" ]; then
+    saved=$(sudo cat "${RESOLV_STATE}")
+    case "${saved}" in
+      link:*)
+        sudo ln -sfn "${saved#link:}" "${RESOLV_CONF}"
+        ;;
+      file)
+        # Restore via a temp file + `mv -fT`, NOT a plain cp onto the path: at
+        # this point resolv.conf IS our symlink to the stub, and cp follows it —
+        # it would write the backup THROUGH the link into the stub file itself,
+        # corrupting resolved's stub and leaving resolv.conf a symlink forever.
+        # mv -T replaces the link atomically, so there is also no instant where
+        # the host has no resolv.conf at all.
+        sudo cp --no-preserve=timestamps "${RESOLV_BAK}" "${RESOLV_CONF}.town-tmp"
+        sudo mv -fT "${RESOLV_CONF}.town-tmp" "${RESOLV_CONF}"
+        ;;
+    esac
+    sudo rm -f "${RESOLV_STATE}" "${RESOLV_BAK}"
+    changed=1
+  fi
   if [ -f "${DROPIN}" ]; then
     sudo rm -f "${DROPIN}"
     changed=1
@@ -132,6 +168,58 @@ if [ -n "${UPLINK}" ] && [ "${UPLINK}" != "${VM_BRIDGE:-virbr0}" ]; then
   printf '%s\n' "${UPLINK}" | sudo tee "${STATE}" >/dev/null
   sudo resolvectl dns "${UPLINK}" "" >/dev/null 2>&1 || true
   sudo resolvectl domain "${UPLINK}" "" >/dev/null 2>&1 || true
+fi
+
+# Put resolved IN THE RESOLUTION PATH, without which everything above is inert.
+#
+# All of the above configures systemd-resolved — but glibc does not ask resolved
+# anything, it reads /etc/resolv.conf. On a host where that file is a real file
+# written by NetworkManager (`resolvectl status` says "resolv.conf mode:
+# foreign", the default on Arch/Manjaro with no dns= setting), it lists the DHCP
+# servers DIRECTLY, so every lookup goes straight past resolved to the ISP's
+# resolver and the VM is never consulted. Worse, it looks like it worked:
+# `resolvectl status` cheerfully shows the VM as the global server, because in
+# foreign mode resolved is merely READING that same file.
+#
+# So point resolv.conf at resolved's stub for the duration, recording exactly
+# what was there (symlink target, or the file's bytes) to put back on revert.
+# The stub is preferred over writing `nameserver <VM_DNS>` straight into
+# resolv.conf: it keeps resolved as the broker, so mDNS/LLMNR still resolve the
+# guest's own .local name (which qemu.sh sets up on the bridge) instead of being
+# bypassed along with everything else.
+if [ -e "${STUB}" ]; then
+  # Already pointing into resolved (stub mode, or a previous run) -> leave it.
+  CURRENT_TARGET=""
+  [ -L "${RESOLV_CONF}" ] && CURRENT_TARGET=$(readlink "${RESOLV_CONF}")
+  if [ "${CURRENT_TARGET}" != "${STUB}" ]; then
+    # Record the ORIGINAL only once: a second launch must not overwrite the
+    # saved state with our own symlink and lose the way back.
+    if [ ! -f "${RESOLV_STATE}" ]; then
+      if [ -n "${CURRENT_TARGET}" ]; then
+        printf 'link:%s\n' "${CURRENT_TARGET}" | sudo tee "${RESOLV_STATE}" >/dev/null
+      elif [ -e "${RESOLV_CONF}" ]; then
+        sudo cp --no-preserve=timestamps "${RESOLV_CONF}" "${RESOLV_BAK}"
+        printf 'file\n' | sudo tee "${RESOLV_STATE}" >/dev/null
+      fi
+    fi
+    sudo ln -sfn "${STUB}" "${RESOLV_CONF}"
+    echo "  ${RESOLV_CONF} -> ${STUB} (was: ${CURRENT_TARGET:-a static file}; restored on revert)"
+  fi
+
+  # NetworkManager in its default dns=default mode OWNS resolv.conf and will
+  # rewrite it on the next connectivity change, silently taking resolution back
+  # mid-session. Nothing here can prevent that without making a permanent change
+  # to the host's configuration, which is not this script's business — so say so
+  # once and name the one-line fix rather than papering over it.
+  if ! (NetworkManager --print-config 2>/dev/null || cat /etc/NetworkManager/NetworkManager.conf 2>/dev/null) \
+       | grep -qE '^\s*dns\s*=\s*(systemd-resolved|none)'; then
+    if pgrep -x NetworkManager >/dev/null 2>&1; then
+      echo "  note: NetworkManager may rewrite ${RESOLV_CONF} on the next network change." >&2
+      echo "        To make this stick, set dns=systemd-resolved in NetworkManager.conf." >&2
+    fi
+  fi
+else
+  echo "  warning: ${STUB} missing — is systemd-resolved running? DNS not switched." >&2
 fi
 
 echo "Host DNS -> ${VM_DNS} (Town OS VM)${UPLINK:+, ${UPLINK} link resolver cleared}"

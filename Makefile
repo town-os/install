@@ -112,7 +112,10 @@ VM_IP       ?= 192.168.122.50
 # resolves through rolodex the way a real client would (.home names included).
 # Defaults to the VM's pinned address; every `make qemu*` target sets it, and
 # `make stop`/`make stop-qemu` (and a qemu-fg/qemu-usb exit) restores the host.
-# Runtime-only -- a drop-in under /run, so a reboot clears it regardless.
+# The resolved config is runtime-only (a drop-in under /run). /etc/resolv.conf
+# is repointed at resolved's stub too -- without that, a host whose resolv.conf
+# is a static NetworkManager file never asks resolved anything and the switch is
+# inert -- and is backed up and restored by the revert.
 # Set VM_DNS=0 to leave the host's DNS alone. See make/host-dns.sh.
 VM_DNS      ?= $(VM_IP)
 # IPv6 ULA /64 added to the libvirt default network so the guest gets an IPv6
