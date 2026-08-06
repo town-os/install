@@ -87,24 +87,17 @@ MAC=$(echo "${VM_NAME:-town-os}" | md5sum | sed 's/^\(..\)\(..\)\(..\).*/52:54:0
 # the shared 'default' network when it changes, so co-running VMs on it blip.
 if command -v virsh >/dev/null 2>&1 \
    && [ "$(sudo virsh net-info default 2>/dev/null | awk '/^Bridge:/{print $2}')" = "${VM_BRIDGE}" ]; then
-  DNS_DEV=$(ip -4 route get 1.1.1.1 2>/dev/null \
-    | awk '{ for (i = 1; i < NF; i++) if ($i == "dev") print $(i + 1) }' | head -1)
-  DNS_NET_PREFIX=$(sudo virsh net-dumpxml default 2>/dev/null \
-    | grep -oE "ip address='[0-9.]+'" | head -1 | grep -oE "[0-9]+\.[0-9]+\.[0-9]+")
-  # Host upstream DNS: prefer NetworkManager's per-link record (it preserves the
-  # DHCP values even when systemd-resolved is manually overridden to point at the
-  # guest); fall back to networkd lease files. Drop loopback (the resolved stub),
-  # the guest subnet, and this VM's IP -- forwarding to any of those rebuilds the
-  # loop. grep -oE extracts the address regardless of nmcli's ' | ' separators.
-  HOST_DNS=$(
-    { nmcli -g IP4.DNS dev show "${DNS_DEV}" 2>/dev/null | tr '|,' '\n\n'
-      awk -F= '/^DNS=/{print $2}' /run/systemd/netif/leases/* 2>/dev/null | tr ' ' '\n'; } \
-      | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' \
-      | grep -vE '^127\.' \
-      | { if [ -n "${DNS_NET_PREFIX}" ]; then grep -vE "^${DNS_NET_PREFIX//./\\.}\."; else cat; fi; } \
-      | { if [ -n "${VM_IP:-}" ]; then grep -vxF "${VM_IP}"; else cat; fi; } \
-      | awk 'NF && !seen[$0]++'
-  ) || true   # tolerate pipefail: literal glob when no networkd leases, or greps that filter everything out
+  # Host upstream DNS comes from make/upstream-dns.sh — the SINGLE discovery
+  # implementation, shared with the build paths (which use it to keep an image
+  # build from ever resolving through this guest; see that script's header). It
+  # already prefers the DHCP-provided values over /etc/resolv.conf and already
+  # drops loopback and every local virtual-bridge subnet — including this
+  # network's own — so the only extra exclusion needed here is the VM's pinned
+  # address, which matters when VM_IP sits outside the bridge's subnet.
+  # `|| true` tolerates a discovery that finds nothing; an empty list simply
+  # leaves the forwarders alone.
+  HOST_DNS=$("$(dirname "$0")/upstream-dns.sh" \
+               ${VM_IP:+--exclude "${VM_IP}"} 2>/dev/null) || true
   if [ -n "${HOST_DNS}" ]; then
     DNS_WANT=$(printf '%s\n' ${HOST_DNS} | sort | tr '\n' ' ')
     # `|| true`: when the network has NO <forwarder> yet (first run on this host),

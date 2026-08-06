@@ -30,6 +30,33 @@ if [ -z "${BASE_IMAGE:-}" ]; then
 fi
 echo "Using builder base image: ${BASE_IMAGE}"
 
+# DNS for the build is EXPLICIT — never inherited from the host's resolver.
+#
+# --network=host (below) otherwise means the container reads the host's
+# /etc/resolv.conf, and this repo rewrites that file: every `make qemu*` target
+# points the host's systemd-resolved at the dev VM (make/host-dns.sh) so the
+# workstation resolves through rolodex. That is the qemu tasks' job and it stays
+# — but it must not reach a build. A host that has launched the dev VM hands its
+# resolver to pacstrap and to every container-image pull in install.sh, and that
+# resolver is a NAT'd guest which may be down, mid-boot or unprovisioned. The
+# failure looks like a mirror problem hours into a build, not like a DNS problem.
+#
+# make/upstream-dns.sh returns the servers the HOST itself got from the local
+# network (DHCP values first, so they survive the resolved override), with
+# loopback and every local virtual-bridge subnet — the dev VM's included —
+# filtered out. --fallback appends public resolvers so a machine with no
+# discoverable DHCP resolver still builds. Empty means "leave DNS alone" (podman
+# then falls back to the host's resolv.conf, i.e. today's behaviour).
+BUILD_DNS="${BUILD_DNS:-$("$SCRIPT_DIR/upstream-dns.sh" --fallback 2>/dev/null || true)}"
+DNS_ARGS=()
+for _s in ${BUILD_DNS}; do DNS_ARGS+=(--dns "${_s}"); done
+if [ ${#DNS_ARGS[@]} -gt 0 ]; then
+  echo "Build DNS (isolated from the host's resolver): $(echo ${BUILD_DNS})"
+else
+  echo "warning: no upstream DNS discovered; the build inherits the host's resolver." >&2
+  echo "         Set BUILD_DNS='1.1.1.1 9.9.9.9' to pin it explicitly." >&2
+fi
+
 # Build the builder image natively (podman layer cache makes repeat runs cheap).
 #
 # --network=host for BOTH the build and the run below: the build needs working
@@ -40,7 +67,10 @@ echo "Using builder base image: ${BASE_IMAGE}"
 # also makes builds immune to netavark rule flushes (a known side effect of
 # `firewall-cmd --reload`). Isolation buys nothing here — the run is already
 # --privileged, and the nested town-build container uses --network=none.
-sudo podman build --network=host --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
+# --dns still applies with --network=host (podman writes the container's own
+# resolv.conf), which is what keeps the host's *routing* without inheriting the
+# host's *resolver*.
+sudo podman build --network=host "${DNS_ARGS[@]}" --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
   --build-arg "BUILD_MIRROR=${BUILD_MIRROR:-}" -t town-os-builder \
   -f "$SCRIPT_DIR/Containerfile.build" "$SCRIPT_DIR"
 
@@ -74,7 +104,7 @@ sudo \
   RPI="${RPI:-}" RG35XX="${RG35XX:-}" RG35XX_DTB="${RG35XX_DTB:-}" \
   UBOOT_BIN="${UBOOT_BIN:-}" \
   RG35XX_DRAM="${RG35XX_DRAM:-}" \
-  podman run --rm --privileged --cgroupns=host --network=host "${TTY_ARG[@]}" \
+  podman run --rm --privileged --cgroupns=host --network=host "${DNS_ARGS[@]}" "${TTY_ARG[@]}" \
   -v /dev:/dev \
   -v "$REPO_ROOT":/build -w /build \
   -e CONTROLLER_IMAGE -e ROLODEX_IMAGE -e UI_IMAGE -e LOCAL_DNS \

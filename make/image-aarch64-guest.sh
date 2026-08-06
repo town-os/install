@@ -202,6 +202,35 @@ ln -sfn /proc/self/fd/0 /dev/stdin
 ln -sfn /proc/self/fd/1 /dev/stdout
 ln -sfn /proc/self/fd/2 /dev/stderr
 
+# --- 0b. (Re)apply this run's network — authoritatively, every boot. -----------
+# /sbin/town-init already configured the interface, but town-init is BAKED INTO
+# THE CACHED BUILD-ENV DISK and that disk outlives the run that wrote it: a disk
+# provisioned before the build VM got its own randomized subnet still hardcodes
+# QEMU's 10.0.2.x, which on this run's network is simply wrong, and the guest
+# would have no route at all. This script is repo-tracked and runs on every boot,
+# so it — not town-init — is the authority. Flush first: an address from the
+# previous plan left on the interface is what makes "it worked yesterday" fail.
+#
+# Resolvers come from the host's REAL upstream (BUILD_DNS, computed by
+# make/upstream-dns.sh), never from SLIRP's DNS proxy unless nothing else is
+# known: that proxy forwards through the host's /etc/resolv.conf, which the qemu
+# targets repoint at the dev VM — a guest that may be down while this builds.
+if [ -n "${GUEST_ADDR:-}" ] && [ -n "${GUEST_GW:-}" ]; then
+  modprobe virtio_net 2>/dev/null || true
+  NET_IFACE="$(ip -o link show 2>/dev/null | awk -F': ' '$2 != "lo" { print $2; exit }')"
+  if [ -n "$NET_IFACE" ]; then
+    ip link set "$NET_IFACE" up 2>/dev/null || true
+    ip addr flush dev "$NET_IFACE" 2>/dev/null || true
+    ip addr add "$GUEST_ADDR/24" dev "$NET_IFACE" 2>/dev/null || true
+    ip route replace default via "$GUEST_GW" 2>/dev/null || true
+  fi
+  : > /etc/resolv.conf
+  for _s in ${BUILD_DNS:-${GUEST_DNS_PROXY:-}}; do
+    printf 'nameserver %s\n' "$_s" >> /etc/resolv.conf
+  done
+  say "network: ${GUEST_ADDR}/24 via ${GUEST_GW}, dns=$(echo ${BUILD_DNS:-${GUEST_DNS_PROXY:-none}})"
+fi
+
 # --- 1. Ensure a healthy pacman keyring (every boot; cheap, self-heals). -------
 # A cached build-env can carry a gnupg home that has a trustdb.gpg file but no
 # usable keys — `podman export` of the base image ships exactly such a home — and

@@ -392,6 +392,43 @@ Override on the command line, e.g. `make qemu VM_MEMORY=8G`.
 | `SERIAL_CONSOLE`   | *(empty)*                        | Build an image whose GRUB defaults to the serial console (no keyboard/monitor needed) |
 | `IMAGE_HOSTNAME`   | `town-os`                        | System hostname and mDNS name            |
 | `LOCAL_DNS`        | *(empty)*                        | Dev DNS override (see below)             |
+| `BUILD_DNS`        | *(auto)*                         | Resolvers the build uses. Empty = the host's real upstream, discovered by `make/upstream-dns.sh`; `" "` inherits the host resolver (see below) |
+| `BUILD_NET`        | *(random)*                       | `/24` for the emulated build VM's user-mode network. Empty = a random RFC1918 `/24` the host has no route into |
+
+## Build DNS isolation
+
+**Builds never resolve through the host's configured resolver, and never touch
+the dev VM's network.** `make qemu*` deliberately points the host's
+systemd-resolved at the guest (`VM_DNS`, see [Reaching the VM](#reaching-the-vm-from-other-devices))
+so the workstation resolves through rolodex like a real client — that is the
+qemu targets' job. But it means a host that has launched the dev VM would
+otherwise hand a NAT'd guest, possibly down or unprovisioned, to an hours-long
+image build, where it surfaces as an unreachable package mirror rather than as a
+DNS problem.
+
+`make/upstream-dns.sh` is the single discovery implementation: it returns what
+the **host itself** got from the local network — NetworkManager's per-link
+`IP4.DNS`, then networkd/dhcpcd leases, then non-loopback `/etc/resolv.conf`
+entries, then the default gateway — and drops loopback plus every subnet owned by
+a local virtual bridge (`virbr*`, `podman*`, `docker*`, `br-*`), so the dev VM can
+never come back as a build resolver. `--fallback` appends public resolvers after
+the discovered ones for a host with no discoverable DHCP resolver.
+
+Each build path applies that list with the mechanism it has:
+
+| Path | Mechanism |
+|------|-----------|
+| Native Arch build | `make/build-dns-ns.sh` runs `install.sh` in a private **mount namespace** with our `resolv.conf` bind-mounted over the host's. The host's file is never modified; the bind dies with the build. Everything inherited — pacstrap, the chroot, in-chroot `curl` — sees the same servers |
+| Container build | `podman build`/`podman run --dns` (works alongside `--network=host`, so the build keeps the host's routing without inheriting its resolver) |
+| Emulated aarch64 VM | The servers are written into the guest's `/etc/resolv.conf`, bypassing QEMU's SLIRP DNS proxy (which forwards via the host's `resolv.conf`) |
+| Installer image | `podman build --network=none` — `FROM scratch` + one `COPY` needs no resolver at all |
+
+The same reasoning covers the subnet: the emulated build VM picks a **random
+RFC1918 `/24` the host has no route into** instead of QEMU's hardcoded
+`10.0.2.0/24`. `192.168.122.0/24` belongs to the qemu targets alone.
+
+Pin the resolvers with `BUILD_DNS='1.1.1.1 9.9.9.9'`, or opt out entirely with
+`BUILD_DNS=' '` to inherit the host's resolver as before.
 
 ## Local DNS mode (development)
 
@@ -617,3 +654,5 @@ The install script performs the following steps:
 | `TTYFORCE_LATEST`  | When non-empty, install the latest ttyforce from crates.io (ignores version pin) |
 | `SERIAL_CONSOLE`   | When non-empty, the image's GRUB defaults to the serial-console entry (headless, no keyboard) |
 | `RPI`              | When non-empty, build a native-boot Raspberry Pi image (aarch64 + btrfs only) |
+| `BUILD_DNS`        | Resolvers the build uses (`'1.1.1.1 9.9.9.9'`). Empty = the host's real upstream; `' '` inherits the host resolver |
+| `BUILD_NET`        | `/24` for the emulated build VM's user-mode network; empty = a random free RFC1918 `/24` |

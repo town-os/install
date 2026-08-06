@@ -292,6 +292,13 @@ help:
 	@echo '  LOG_DIR          = $(LOG_DIR)  (where <target>-log tees its transcript)'
 	@echo '  BASE_IMAGE       Arch base image for the container build path (env var)'
 	@echo '  BUILD_MIRROR     Pacman mirror for the container build; defaults to a US mirror (env var)'
+	@echo '  BUILD_DNS        Resolvers the BUILD uses, e.g. "1.1.1.1 9.9.9.9" (env var). Empty'
+	@echo '                   = auto: the host'\''s real upstream (make/upstream-dns.sh), never the'
+	@echo '                   host'\''s configured resolver — the qemu targets point that at the'
+	@echo '                   dev VM. BUILD_DNS=" " opts out and inherits the host resolver'
+	@echo '  BUILD_NET        /24 for the emulated build VM'\''s user-mode network (env var).'
+	@echo '                   Empty = a random RFC1918 /24 the host has no route into. The dev'
+	@echo '                   VM'\''s $(VM_IP) network belongs to the qemu targets only'
 	@echo
 	@echo 'Release variables:'
 	@echo '  INSTALLER_BASE   = $(INSTALLER_BASE)'

@@ -50,7 +50,13 @@ build_image() {
   ln "$bz2" "$ctx/town-os.img.bz2" 2>/dev/null || cp "$bz2" "$ctx/town-os.img.bz2"
 
   echo "Building ${ROLLING_REF} (also tagged ${DATED_TAG})..."
-  sudo podman build -f "$CONTAINERFILE" -t "$ROLLING_REF" -t "$DATED_REF" "$ctx"
+  # --network=none: this image is `FROM scratch` + one COPY, so the build needs
+  # no network and therefore no resolver. Saying so explicitly keeps the build
+  # out of the host's DNS entirely — which matters here because `make qemu*`
+  # repoints the host's resolver at the dev VM (make/host-dns.sh), and a release
+  # build must never depend on that. (The push below is a host process and does
+  # need the host's network; nothing container-side can isolate that.)
+  sudo podman build --network=none -f "$CONTAINERFILE" -t "$ROLLING_REF" -t "$DATED_REF" "$ctx"
 }
 
 push_image() {

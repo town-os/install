@@ -87,6 +87,77 @@ if [ "$(uname -m)" = "aarch64" ]; then
   log "      Continuing with the emulated path only because you asked for image-aarch64."
 fi
 
+# ---------------------------------------------------------------------------
+# Build-VM network: a RANDOM free /24, and DNS that never goes through the host's
+# configured resolver.
+#
+# The subnet: QEMU user-mode (SLIRP) networking hardcodes 10.0.2.0/24, which is a
+# guess, not a reservation — a host (or VPN) that actually uses 10.0.2.0/24 makes
+# the guest's own addresses shadow it, and the build then cannot reach the very
+# network it is NAT'd onto. The SLIRP net is private to this qemu process, so
+# nothing outside cares what it is; picking a random RFC1918 /24 that the host has
+# no route into removes the collision entirely. Override with BUILD_NET=a.b.c.0/24.
+# This is also why the dev VM's 192.168.122.0/24 never appears here: that subnet
+# belongs to the qemu targets, and the build gets its own.
+#
+# The DNS: SLIRP's built-in proxy (<net>.3) forwards using the HOST's
+# /etc/resolv.conf — which `make qemu*` repoints at the dev VM (make/host-dns.sh).
+# A build VM pointed at that proxy therefore resolves through a guest that may be
+# down, and a multi-hour build dies on a package mirror it could not look up. So
+# the guest is handed the host's REAL upstream servers (make/upstream-dns.sh,
+# which reads the DHCP-provided values and filters loopback plus every local
+# virtual-bridge subnet); SLIRP NATs those queries out exactly as the host would
+# send them. The proxy stays as a last-resort fallback in the guest.
+pick_free_net() {
+  local i candidate probe
+  for i in $(seq 1 40); do
+    case $((RANDOM % 3)) in
+      0) candidate="10.$((RANDOM % 256)).$((RANDOM % 256)).0" ;;
+      1) candidate="172.$((16 + RANDOM % 16)).$((RANDOM % 256)).0" ;;
+      2) candidate="192.168.$((RANDOM % 256)).0" ;;
+    esac
+    probe="${candidate%.0}.1"
+    # A candidate is FREE when the host would route it out through a gateway
+    # ("via <gw>"), i.e. it matches no local subnet and no on-link route (a VPN
+    # split-tunnel included). Anything the host can reach directly is in use.
+    if ip -4 route get "$probe" 2>/dev/null | head -1 | grep -q ' via '; then
+      printf '%s/24\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+if [ -z "${BUILD_NET:-}" ]; then
+  BUILD_NET="$(pick_free_net || true)"
+  if [ -z "$BUILD_NET" ]; then
+    # No default route, or a route covering all of RFC1918 (a full-tunnel VPN).
+    # Fall back to QEMU's own default rather than refusing to build.
+    BUILD_NET="10.0.2.0/24"
+    log "WARNING: could not find a free RFC1918 /24 for the build VM; using ${BUILD_NET}."
+    log "         Set BUILD_NET=a.b.c.0/24 if that collides with this host's network."
+  fi
+fi
+case "$BUILD_NET" in
+  *.0/24) ;;
+  *) die "BUILD_NET must be an a.b.c.0/24 (got '$BUILD_NET')" ;;
+esac
+NET_PREFIX="${BUILD_NET%.0/24}"
+GUEST_ADDR="${NET_PREFIX}.15"        # SLIRP's conventional guest address
+GUEST_GW="${NET_PREFIX}.2"           # SLIRP gateway (the host side of the NAT)
+GUEST_DNS_PROXY="${NET_PREFIX}.3"    # SLIRP's DNS proxy — host resolv.conf, fallback only
+
+# BUILD_DNS may be set explicitly (BUILD_DNS='1.1.1.1 9.9.9.9') to pin the build's
+# resolvers; otherwise discover the host's upstream. --fallback appends public
+# resolvers so a host with no discoverable DHCP resolver still builds.
+BUILD_DNS="${BUILD_DNS:-$("$SCRIPT_DIR/upstream-dns.sh" --fallback 2>/dev/null || true)}"
+log "Build VM network: ${BUILD_NET} (guest ${GUEST_ADDR}, gw ${GUEST_GW})"
+if [ -n "$BUILD_DNS" ]; then
+  log "Build VM DNS (isolated from the host's resolver): $(echo $BUILD_DNS)"
+else
+  log "WARNING: no upstream DNS discovered; the build VM falls back to QEMU's DNS"
+  log "         proxy, which forwards via the HOST's resolver. Set BUILD_DNS=... to pin it."
+fi
+
 mkdir -p "$BUILD_ENV"
 rm -f "$STATUS_FILE"
 
@@ -146,23 +217,32 @@ mount -t tmpfs    tmp  /tmp           2>/dev/null || true
 mount -t tmpfs    run  /run           2>/dev/null || true
 mount -t cgroup2  cg   /sys/fs/cgroup 2>/dev/null || true
 
-# QEMU user-mode (SLIRP) networking uses a FIXED addressing plan, so configure
-# statically — no DHCP client needed.
-modprobe virtio_net 2>/dev/null || true
-IFACE="$(ip -o link show 2>/dev/null | awk -F': ' '$2 != "lo" { print $2; exit }')"
-if [ -n "$IFACE" ]; then
-  ip link set "$IFACE" up
-  ip addr add 10.0.2.15/24 dev "$IFACE" 2>/dev/null || true
-  ip route add default via 10.0.2.2 2>/dev/null || true
-fi
-printf 'nameserver 10.0.2.3\n' > /etc/resolv.conf
-
-# Mount the repo (shared read-write via virtio-9p, tag "repo").
+# Mount the repo (shared read-write via virtio-9p, tag "repo") FIRST — it carries
+# guest-params.env, which is where the network for this run is described. 9p needs
+# no network, so this ordering costs nothing.
 modprobe 9pnet_virtio 2>/dev/null || true
 modprobe 9p 2>/dev/null || true
 mkdir -p /mnt/repo
 mount -t 9p -o trans=virtio,version=9p2000.L,msize=524288 repo /mnt/repo 2>/dev/null \
   || echo "town-init: FAILED to mount 9p repo share" > /dev/console
+
+# QEMU user-mode (SLIRP) networking has no DHCP client here, so configure it
+# statically from the addresses the host picked for this run (a random free /24 —
+# see make/image-aarch64.sh). The 10.0.2.x values are only QEMU's defaults, used
+# when the params are unreadable. DNS is deliberately NOT SLIRP's proxy when the
+# host could name real upstream servers: that proxy forwards via the host's
+# /etc/resolv.conf, which `make qemu*` points at the dev VM.
+GUEST_ADDR=10.0.2.15; GUEST_GW=10.0.2.2; GUEST_DNS_PROXY=10.0.2.3; BUILD_DNS=
+[ -r /mnt/repo/.build-env/guest-params.env ] && . /mnt/repo/.build-env/guest-params.env
+modprobe virtio_net 2>/dev/null || true
+IFACE="$(ip -o link show 2>/dev/null | awk -F': ' '$2 != "lo" { print $2; exit }')"
+if [ -n "$IFACE" ]; then
+  ip link set "$IFACE" up
+  ip addr add "$GUEST_ADDR/24" dev "$IFACE" 2>/dev/null || true
+  ip route add default via "$GUEST_GW" 2>/dev/null || true
+fi
+: > /etc/resolv.conf
+for _s in ${BUILD_DNS:-$GUEST_DNS_PROXY}; do printf 'nameserver %s\n' "$_s" >> /etc/resolv.conf; done
 
 if [ -r /mnt/repo/make/image-aarch64-guest.sh ]; then
   # Run the guest script from tmpfs, NOT directly off the 9p share. PID1 reads
@@ -282,6 +362,10 @@ TTYFORCE_DEV='${TTYFORCE_DEV:-}'
 TTYFORCE_LATEST='${TTYFORCE_LATEST:-}'
 IMAGE_HOSTNAME='${IMAGE_HOSTNAME:-}'
 SERIAL_CONSOLE='${SERIAL_CONSOLE:-}'
+GUEST_ADDR='${GUEST_ADDR}'
+GUEST_GW='${GUEST_GW}'
+GUEST_DNS_PROXY='${GUEST_DNS_PROXY}'
+BUILD_DNS='$(echo ${BUILD_DNS})'
 EOF
 
 log "Booting aarch64 build VM (TCG — slow; grab a coffee). RPI='${RPI:-}' vCPUs=${VM_CPUS} mem=${VM_MEMORY}"
@@ -343,7 +427,7 @@ log "HMP monitor: socat - UNIX-CONNECT:$MONITOR_SOCK"
   -drive "file=$BUILDER_DISK,if=none,id=root,format=raw,cache=writeback" \
   -device virtio-blk-pci,drive=root \
   -device virtio-rng-pci \
-  -netdev user,id=net0 \
+  -netdev "user,id=net0,net=${BUILD_NET},host=${GUEST_GW},dns=${GUEST_DNS_PROXY}" \
   -device virtio-net-pci,netdev=net0 \
   -fsdev "local,id=repo,path=$REPO_ROOT,security_model=none" \
   -device virtio-9p-pci,fsdev=repo,mount_tag=repo \
