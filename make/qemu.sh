@@ -964,6 +964,26 @@ fi
 # via vm-relay.pid. In the foreground case the trap below tears it down with the
 # VM, and vm-relay.sh's own trap removes its socats and firewall openings.
 RELAY_PID=""
+
+# Everything torn down when THIS script owns the VM's lifetime (FOREGROUND).
+# One function and one EXIT trap: a second `trap ... EXIT` would silently
+# replace the first, so the relay and the host-DNS switch have to share it.
+fg_cleanup() {
+  if [ -n "${RELAY_PID:-}" ]; then
+    kill "${RELAY_PID}" 2>/dev/null || true
+    rm -f vm-relay.pid
+  fi
+  # Give the host its resolver back — `make qemu-fg`/`qemu-usb` pointed it at a
+  # VM that is gone the moment this returns. Idempotent, and a no-op when the
+  # launch never switched it (VM_DNS=0, or no resolvectl on this host).
+  "$(dirname "$0")/host-dns.sh" unset || true
+}
+# Registered up front, not inside the relay block below: the DNS switch needs
+# undoing even when VM_LAN=0 or no reserved IP kept the relay from starting.
+if [ "${FOREGROUND}" = "1" ]; then
+  trap fg_cleanup EXIT
+fi
+
 if [ "${VM_LAN}" != "0" ]; then
   if [ -z "${RESERVED_IP:-}" ]; then
     echo "warning: no reserved guest IP (custom bridge?); skipping LAN access" >&2
@@ -986,12 +1006,9 @@ if [ "${VM_LAN}" != "0" ]; then
     fi
     RELAY_PID=$!
     echo "${RELAY_PID}" > vm-relay.pid
-    # Only tear it down here when this script owns the VM's lifetime. In the
+    # In the FOREGROUND case fg_cleanup (trapped above) reaps it. In the
     # background case qemu.sh exits while the VM keeps running, so the relay must
     # outlive it — stop-qemu.sh kills it instead.
-    if [ "${FOREGROUND}" = "1" ]; then
-      trap 'kill "${RELAY_PID}" 2>/dev/null || true; rm -f vm-relay.pid' EXIT
-    fi
   fi
 fi
 

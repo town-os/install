@@ -22,3 +22,9 @@ if [ -f qemu.pid ]; then
 else
   echo "No qemu.pid file found"
 fi
+
+# Give the host back its own resolver. Unconditional and idempotent: it exits
+# silently when nothing was switched, and running it even on the "no qemu.pid"
+# path is what recovers a host left pointed at a VM that died without its trap
+# firing (a kill -9, a host crash, a background launch never stopped).
+"$(dirname "$0")/host-dns.sh" unset || true

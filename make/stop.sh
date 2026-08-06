@@ -17,3 +17,8 @@ fi
 if [ "${stopped}" -eq 0 ]; then
   echo "No tracked VMs found"
 fi
+
+# Always give the host back its own resolver, even when no VM was tracked — that
+# is exactly the case where a stale switch (VM killed without its trap firing)
+# needs recovering. Idempotent and silent when nothing was set.
+"${PWD}/make/host-dns.sh" unset || true

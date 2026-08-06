@@ -108,6 +108,13 @@ VM_NAME     ?= town-os
 # two VMs sharing one VM_IP collide and the second falls back to a dynamic lease.
 # (If unset/out-of-subnet, qemu.sh derives a stable IP from VM_NAME instead.)
 VM_IP       ?= 192.168.122.50
+# Point the HOST's systemd-resolved at the VM while it runs, so the workstation
+# resolves through rolodex the way a real client would (.home names included).
+# Defaults to the VM's pinned address; every `make qemu*` target sets it, and
+# `make stop`/`make stop-qemu` (and a qemu-fg/qemu-usb exit) restores the host.
+# Runtime-only -- a drop-in under /run, so a reboot clears it regardless.
+# Set VM_DNS=0 to leave the host's DNS alone. See make/host-dns.sh.
+VM_DNS      ?= $(VM_IP)
 # IPv6 ULA /64 added to the libvirt default network so the guest gets an IPv6
 # address (SLAAC) alongside its NAT'd IPv4 — lets rolodex/Town OS be set up over
 # IPv6 too. `::1` is the gateway; the guest auto-derives a stable EUI-64 address
@@ -179,7 +186,7 @@ RG35XX_DRAM ?=
 # target added here keeps getting its `-log` variant for free.
 PHONY_TARGETS := help run run-release stop image image-release compress-release build-installer push-installer qemu qemu-fg qemu-usb \
         qemu-release virtualbox virtualbox-fg virtualbox-release \
-        stop-qemu stop-virtualbox vm-ip serial clean clean-images \
+        stop-qemu stop-virtualbox vm-ip vm-dns vm-dns-revert check-usb-dev serial clean clean-images \
         cleanup-loopback deps deps-debian release flash rebuild-qemu image-container
 
 .PHONY: $(PHONY_TARGETS)
@@ -224,6 +231,8 @@ help:
 	@echo '  rebuild-qemu     stop + clean + image + qemu'
 	@echo '  serial           Attach to a running QEMU serial console (Ctrl-] to detach)'
 	@echo '  vm-ip            Print the IP address of the running VM'
+	@echo '  vm-dns           Point the HOST'\''s resolver at the VM (every qemu target does this)'
+	@echo '  vm-dns-revert    Restore the host'\''s own resolver (stop/stop-qemu does this)'
 	@echo
 	@echo 'Run (VirtualBox):'
 	@echo '  virtualbox       Build if stale, launch a VirtualBox VM in the background'
@@ -293,6 +302,9 @@ help:
 	@echo '  VM_DISK_SIZE     = $(VM_DISK_SIZE)  (each of the four data disks)'
 	@echo '  VM_IP            = $(VM_IP)  (libvirt DHCP reservation;'
 	@echo '                   give each concurrently-running VM its own address)'
+	@echo '  VM_DNS           = $(VM_DNS)  Host resolver while a qemu VM runs (rolodex on the'
+	@echo '                   guest, so the workstation sees .home names). Runtime-only, undone'
+	@echo '                   by stop/stop-qemu. VM_DNS=0 leaves the host'\''s DNS alone'
 	@echo '  VM_NET6_PREFIX   = $(VM_NET6_PREFIX)  ULA /64 giving the guest IPv6 via SLAAC;'
 	@echo '                   empty disables. Only offered when the host itself reaches the'
 	@echo '                   v6 internet — VM_NET6_FORCE=1 skips that probe, VM_IP6'
@@ -473,13 +485,26 @@ run-release: run
 qemu-release: qemu
 virtualbox-release: virtualbox
 
-qemu: $(IMAGE)
+# Point the host's systemd-resolved at the VM (VM_DNS, default VM_IP) and undo
+# it. Every qemu target depends on vm-dns; vm-dns-revert is run by stop-qemu.sh
+# and by qemu.sh's foreground exit trap, so a launch never outlives the switch.
+# VM_DNS=0 makes vm-dns a no-op (the revert still cleans up a prior launch).
+vm-dns:
+	@VM_DNS=$(VM_DNS) VM_BRIDGE=$(VM_BRIDGE) ${PWD}/make/host-dns.sh set
+
+vm-dns-revert:
+	@${PWD}/make/host-dns.sh unset
+
+# vm-dns is listed LAST so it runs after the image build, not before it: make
+# walks prerequisites left to right, and switching the host's resolver ahead of
+# a possible hour-long rebuild would leave it pointed at a VM that isn't running.
+qemu: $(IMAGE) vm-dns
 	VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_CPUS=$(VM_CPUS) VM_BRIDGE=$(VM_BRIDGE) \
 	  VM_NAME=$(VM_NAME) VM_IP=$(VM_IP) USB_PHONE=$(USB_PHONE) VM_NET6_PREFIX=$(VM_NET6_PREFIX) VM_IP6=$(VM_IP6) IMAGE=$(IMAGE) \
 	  VM_LAN=$(VM_LAN) \
 	  ${PWD}/make/qemu.sh $(IMAGE)
 
-qemu-fg: $(IMAGE)
+qemu-fg: $(IMAGE) vm-dns
 	FOREGROUND=1 VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_CPUS=$(VM_CPUS) VM_BRIDGE=$(VM_BRIDGE) \
 	  VM_NAME=$(VM_NAME) VM_IP=$(VM_IP) USB_PHONE=$(USB_PHONE) VM_NET6_PREFIX=$(VM_NET6_PREFIX) VM_IP6=$(VM_IP6) \
 	  VM_LAN=$(VM_LAN) \
@@ -496,10 +521,16 @@ qemu-fg: $(IMAGE)
 # stick under full-system qemu-system-aarch64 emulation (no KVM, slow) so an
 # aarch64 image can be tested without aarch64 hardware, e.g.:
 #   make qemu-usb TARGET=aarch64 USB_DEV=/dev/sda
-qemu-usb:
-	@[ -n "$(USB_DEV)" ] || { echo 'error: set USB_DEV=/dev/sdX (the USB block device to boot)'; exit 1; }
+#
+# The USB_DEV check is a PREREQUISITE rather than the first recipe line so that
+# it runs before vm-dns: as a recipe line it would fire only after the host's
+# resolver had already been switched to a VM that is never going to launch.
+qemu-usb: check-usb-dev vm-dns
 	FOREGROUND=1 USB_DEV=$(USB_DEV) QEMU_ARCH=$(BUILD_ARCH) RPI=$(RPI) RG35XX=$(RG35XX) GAMEPAD=$(GAMEPAD) VM_DISK_SIZE=$(VM_DISK_SIZE) VM_MEMORY=$(VM_MEMORY) VM_CPUS=$(VM_CPUS) VM_BRIDGE=$(VM_BRIDGE) \
 	  VM_NAME=$(VM_NAME) VM_IP=$(VM_IP) USB_PHONE=$(USB_PHONE) VM_NET6_PREFIX=$(VM_NET6_PREFIX) VM_IP6=$(VM_IP6) ${PWD}/make/qemu.sh $(USB_DEV)
+
+check-usb-dev:
+	@[ -n "$(USB_DEV)" ] || { echo 'error: set USB_DEV=/dev/sdX (the USB block device to boot)'; exit 1; }
 
 stop:
 	IMAGE=$(IMAGE) VM_NAME=$(VM_NAME) ${PWD}/make/stop.sh
