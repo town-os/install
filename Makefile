@@ -485,14 +485,21 @@ image-container: $(IMAGE_SOURCES) .build-config
 	CONTROLLER_IMAGE=$(CONTROLLER_IMAGE) ROLODEX_IMAGE=$(ROLODEX_IMAGE) UI_IMAGE=$(UI_IMAGE) LOCAL_DNS=$(LOCAL_DNS) TTYFORCE_DEV=$(TTYFORCE_DEV) TTYFORCE_LATEST=$(TTYFORCE_LATEST) IMAGE_HOSTNAME=$(IMAGE_HOSTNAME) SERIAL_CONSOLE=$(SERIAL_CONSOLE) RPI=$(RPI) RG35XX=$(RG35XX) RG35XX_DTB=$(RG35XX_DTB) RG35XX_DRAM=$(RG35XX_DRAM) UBOOT_BIN=$(UBOOT_BIN) ${PWD}/make/image-container.sh $(IMAGE_SIZE) $(IMAGE)
 
 # Compressed release image, as a real file target so it is NOT rebuilt when the
-# .bz2 is already fresh. It depends on the image's *sources* rather than on
-# $(IMAGE): the raw image is deleted right after compression to save disk, so a
-# dependency on $(IMAGE) would see it missing and force a needless second image
-# build every time. The recipe (re)builds the raw image only if its own sources
-# changed, then compresses and removes it.
-$(IMAGE).bz2: $(IMAGE_SOURCES) .build-config
-	$(MAKE) $(IMAGE)
-	sudo pv $(IMAGE) | lbzip2 > $@ && rm -f $(IMAGE)
+# .bz2 is already fresh.
+#
+# The raw image is KEPT. This used to end in `&& rm -f $(IMAGE)` to save the
+# ~2.5GB, which meant every release silently ate the artifact you had just spent
+# hours building -- and left `make flash` with nothing to write. Disk is cheaper
+# than an emulated rebuild; `make clean-images` still clears both out.
+#
+# That deletion was also the only reason this target keyed on the image's
+# *sources* and re-entered make: with $(IMAGE) deleted, depending on it would
+# see it missing and force a needless second image build every time. Now that
+# the raw file persists, $(IMAGE) is the honest prerequisite -- its own rule
+# handles source staleness, and a raw image newer than the .bz2 (say, rebuilt by
+# hand) correctly recompresses instead of pushing a stale one.
+$(IMAGE).bz2: $(IMAGE)
+	sudo pv $(IMAGE) | lbzip2 > $@
 
 compress-release: $(IMAGE).bz2
 

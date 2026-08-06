@@ -191,10 +191,17 @@ print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+# NOTHING HERE REMOVES OR RENAMES THE IMAGE FILE. The build needs a blank slate
+# (a plain `truncate -s $IMAGE_SIZE` over an existing image merely EXTENDS it,
+# leaving the old partition table and filesystem signatures underneath, which
+# would have mkfs prompting "Proceed anyway?" on stdin nothing is reading), so it
+# empties the file IN PLACE: truncate to 0 frees every block, and the re-extend
+# below hands back a sparse file of zeros -- byte-for-byte what a fresh file
+# would be. Same inode, same path, never unlinked, never moved.
 if [ -f "$IMAGE" ]
 then
   eject_loopback
-  rm -f "$IMAGE"
+  truncate -s 0 "$IMAGE"
 fi
 
 MOUNT_POINT=$(mktemp -d)
