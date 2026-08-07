@@ -11,6 +11,18 @@ if [ -f vm-relay.pid ]; then
   rm -f vm-relay.pid
 fi
 
+# Reap the host-DNS waiter (make/host-dns.sh set) a background launch detached
+# for the same reason. Killed BEFORE the unset below: if the guest never came up
+# it is still in its probe loop, and letting it win that race would re-point the
+# host at a VM we are in the middle of stopping.
+if [ -f vm-dns.pid ]; then
+  DNS_PID=$(cat vm-dns.pid)
+  if kill "${DNS_PID}" 2>/dev/null; then
+    echo "Stopped host-DNS waiter (PID ${DNS_PID})"
+  fi
+  rm -f vm-dns.pid
+fi
+
 if [ -f qemu.pid ]; then
   PID=$(sudo cat qemu.pid)
   if sudo kill "${PID}" 2>/dev/null; then

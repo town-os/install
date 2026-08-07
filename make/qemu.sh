@@ -957,6 +957,7 @@ fi
 # via vm-relay.pid. In the foreground case the trap below tears it down with the
 # VM, and vm-relay.sh's own trap removes its socats and firewall openings.
 RELAY_PID=""
+DNS_PID=""
 
 # Everything torn down when THIS script owns the VM's lifetime (FOREGROUND).
 # One function and one EXIT trap: a second `trap ... EXIT` would silently
@@ -966,9 +967,19 @@ fg_cleanup() {
     kill "${RELAY_PID}" 2>/dev/null || true
     rm -f vm-relay.pid
   fi
+  # Kill the DNS waiter FIRST, then undo. If the guest never came up it is still
+  # sitting in its probe loop, and letting it win the race would leave the host
+  # pointed at a VM that has already exited — the exact state the unset below is
+  # here to prevent.
+  if [ -n "${DNS_PID:-}" ]; then
+    kill "${DNS_PID}" 2>/dev/null || true
+    wait "${DNS_PID}" 2>/dev/null || true
+    rm -f vm-dns.pid
+  fi
   # Give the host its resolver back — `make qemu-fg`/`qemu-usb` pointed it at a
   # VM that is gone the moment this returns. Idempotent, and a no-op when the
-  # launch never switched it (VM_DNS=0, or no resolvectl on this host).
+  # launch never switched it (VM_DNS=0, no resolvectl on this host, or the guest
+  # never answered on :53).
   "$(dirname "$0")/host-dns.sh" unset || true
 }
 # Registered up front, not inside the relay block below: the DNS switch needs
@@ -1003,6 +1014,37 @@ if [ "${VM_LAN}" != "0" ]; then
     # background case qemu.sh exits while the VM keeps running, so the relay must
     # outlive it — stop-qemu.sh kills it instead.
   fi
+fi
+
+# Point the HOST's resolver at the guest's rolodex — but only once rolodex is
+# actually answering, which is why this runs HERE (after the VM is launched) and
+# in the BACKGROUND, rather than as a `vm-dns` make prerequisite ahead of the
+# launch. host-dns.sh waits for ${VM_DNS}:53 and does nothing at all if it never
+# answers, so the host keeps its own working resolver for the whole guest boot,
+# and `make qemu-usb` against a blank stick — where rolodex is never coming up —
+# never has its DNS touched at all. VM_DNS=0 makes the whole thing a no-op.
+#
+# The timeout is generous because unlike ../town-os (where rolodex is already
+# running when the redirect fires) the guest here has to boot and start it.
+# Fall back to the address libvirt was actually asked to reserve for this guest,
+# so a direct qemu.sh invocation (no Makefile) still redirects at the right host.
+DNS_TARGET="${VM_DNS:-${RESERVED_IP:-}}"
+if [ -n "${DNS_TARGET}" ] && [ "${DNS_TARGET}" != "0" ]; then
+  # Session placement mirrors the relay above, for the same sudo reason: in the
+  # FOREGROUND case keep it in this script's session and controlling terminal so
+  # its `sudo -n -v` keepalive reuses the credential primed at the top of this
+  # script (tty_tickets key the cache to the terminal). Only the BACKGROUND
+  # (-daemonize) case needs setsid, because there qemu.sh exits while the VM
+  # lives on, so the waiter must outlive it; stop-qemu.sh reaps it via vm-dns.pid.
+  if [ "${FOREGROUND}" = "1" ]; then
+    VM_DNS="${DNS_TARGET}" VM_BRIDGE="${VM_BRIDGE}" \
+      VM_DNS_WAIT="${VM_DNS_WAIT:-600}" "$(dirname "$0")/host-dns.sh" set &
+  else
+    VM_DNS="${DNS_TARGET}" VM_BRIDGE="${VM_BRIDGE}" \
+      VM_DNS_WAIT="${VM_DNS_WAIT:-600}" setsid "$(dirname "$0")/host-dns.sh" set &
+  fi
+  DNS_PID=$!
+  echo "${DNS_PID}" > vm-dns.pid
 fi
 
 if [ "${#GFX_ARGS[@]}" -gt 0 ]; then
