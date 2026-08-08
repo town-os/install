@@ -4,9 +4,9 @@
 # these into the builder image's pacman cache (stamped as an image layer) so the
 # build-time `pacstrap -Kc` reuses them instead of re-downloading on every build.
 #
-# Arch-specific (kernel) and storage-backend-specific (btrfs-progs / mdadm /
-# *-zfs) packages are NOT listed here — install.sh appends those from `uname -m`
-# and town-os.yaml. One package per line; '#' comments and blank lines ignored.
+# Arch-specific (kernel) and storage packages (btrfs-progs / mdadm) are NOT
+# listed here — install.sh appends those from `uname -m` and town-os.yaml.
+# One package per line; '#' comments and blank lines ignored.
 base
 base-devel
 clang

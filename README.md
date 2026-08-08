@@ -549,8 +549,7 @@ the storage provisioning scripts at boot time.
 
 | Setting            | Values                | Default  | Description                                    |
 |--------------------|-----------------------|----------|------------------------------------------------|
-| `storage_backend`  | `btrfs`, `zfs`        | `btrfs`  | Filesystem used for the storage pool           |
-| `btrfs_raid_mode`  | `native`, `mdadm`     | `native` | Multi-disk redundancy strategy (btrfs only)    |
+| `btrfs_raid_mode`  | `native`, `mdadm`     | `native` | Multi-disk redundancy strategy                 |
 | `vm_disk_size`     | any `truncate -s` val | `50G`    | Size of each VM data disk (sparse)             |
 
 ## Dependencies
@@ -612,8 +611,8 @@ The install script performs the following steps:
    `make/base-packages.txt` (podman, GRUB, openssh, dhcpcd, WiFi and WireGuard
    tools, and a curated set of admin utilities). The kernel is chosen by
    architecture (`linux618` on x86_64, `linux-aarch64`, or `linux-rpi` for Pi
-   images) and storage packages by `town-os.yaml`: `linux618-zfs` for the `zfs`
-   backend (x86_64 only), `mdadm` for btrfs in `mdadm` raid mode.
+   images), plus `btrfs-progs` and — in `mdadm` raid mode (`town-os.yaml`) —
+   `mdadm`.
 
 4. **Configure the system** — Inside the chroot the configure script:
    - Sets the root password, locale, timezone, and hostname (`town-os`).

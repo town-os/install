@@ -2,13 +2,6 @@
 
 set -euo pipefail
 
-town_config() {
-  grep "^${1}:" /usr/lib/town-os/town-os.yaml | awk '{ print $2 }' | tr -d '"' | tr -d "'"
-}
-
-BACKEND=$(town_config storage_backend)
-BACKEND="${BACKEND:-btrfs}"
-
 chown root:root /usr/lib/town-os/scripts/*.sh
 chmod +x /usr/lib/town-os/scripts/*.sh
 
@@ -380,22 +373,15 @@ RefuseManualStop=yes
 ConditionPathExists=
 NODISABLE
 
-if [ "$BACKEND" = "zfs" ]
-then
-  # zfs-mount.service enablement is handled via D-Bus in make/install.sh (Podman container phase)
-  echo DO_OVERLAY_MOUNTS=yes >> /etc/default/zfs
-  echo ZPOOL_IMPORT_ALL_VISIBLE=yes >> /etc/default/zfs
-fi
-
 # Network config is written by ttyforce at boot and persisted via btrfs etc overlay.
 # No catch-all network config here — only the ttyforce-selected interface should be active.
 
-# Configure podman storage — use native btrfs/zfs driver so we avoid
+# Configure podman storage — use the native btrfs driver so we avoid
 # overlayfs-on-overlayfs (the root is squashfs+tmpfs overlay)
 mkdir -p /etc/containers
 cat >/etc/containers/storage.conf <<STORAGE
 [storage]
-driver = "$BACKEND"
+driver = "btrfs"
 graphroot = "/town-os/containers"
 STORAGE
 

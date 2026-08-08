@@ -14,8 +14,6 @@ town_config() {
   grep "^${1}:" ./town-os.yaml | awk '{ print $2 }' | tr -d '"' | tr -d "'"
 }
 
-STORAGE_BACKEND=$(town_config storage_backend)
-STORAGE_BACKEND="${STORAGE_BACKEND:-btrfs}"
 BTRFS_RAID_MODE=$(town_config btrfs_raid_mode)
 BTRFS_RAID_MODE="${BTRFS_RAID_MODE:-native}"
 
@@ -91,13 +89,11 @@ ARCH="$(uname -m)"
 case "$ARCH" in
   x86_64)
     KERNEL_PKG="linux618"
-    KERNEL_ZFS_PKG="linux618-zfs"
     GRUB_EFI_TARGET="x86_64-efi"
     SERIAL_TTY="ttyS0"         # PC 16550 UART
     ;;
   aarch64)
     KERNEL_PKG="linux-aarch64"
-    KERNEL_ZFS_PKG=""          # no prebuilt zfs kernel module package on aarch64
     GRUB_EFI_TARGET="arm64-efi"
     SERIAL_TTY="ttyAMA0"       # ARM PL011 UART (e.g. qemu 'virt'); there is no ttyS0
     ;;
@@ -119,12 +115,7 @@ if [ -n "$RPI" ]; then
     echo "RPI builds are aarch64-only (got $ARCH). Build on an aarch64 host." >&2
     exit 1
   fi
-  if [ "$STORAGE_BACKEND" = "zfs" ]; then
-    echo "RPI builds do not support the zfs storage backend." >&2
-    exit 1
-  fi
   KERNEL_PKG="linux-rpi"     # RPi Foundation kernel: kernel8.img, Pi 4 + Pi 5
-  KERNEL_ZFS_PKG=""
   RPI_FIRMWARE_PKG="raspberrypi-bootloader"
   # Serial console name is per-board on the Pi and the firmware rewrites the
   # `serial0` alias in cmdline.txt to the real device (ttyS0 on Pi 4, ttyAMA10 on
@@ -147,10 +138,6 @@ if [ -n "$RG35XX" ]; then
   fi
   if [ "$ARCH" != "aarch64" ]; then
     echo "RG35XX builds are aarch64-only (got $ARCH). Use 'make image TARGET=rg35xxpro'." >&2
-    exit 1
-  fi
-  if [ "$STORAGE_BACKEND" = "zfs" ]; then
-    echo "RG35XX builds do not support the zfs storage backend." >&2
     exit 1
   fi
   case "$RG35XX_DRAM" in
@@ -299,19 +286,10 @@ if [ -n "$RPI_FIRMWARE_PKG" ]; then
   PACKAGES="$PACKAGES $RPI_FIRMWARE_PKG"
 fi
 
-if [ "$STORAGE_BACKEND" = "zfs" ]
+PACKAGES="$PACKAGES btrfs-progs"
+if [ "$BTRFS_RAID_MODE" = "mdadm" ]
 then
-  if [ -z "$KERNEL_ZFS_PKG" ]; then
-    echo "zfs storage backend is not supported on $ARCH (no $KERNEL_PKG zfs package)" >&2
-    exit 1
-  fi
-  PACKAGES="$PACKAGES $KERNEL_ZFS_PKG"
-else
-  PACKAGES="$PACKAGES btrfs-progs"
-  if [ "$BTRFS_RAID_MODE" = "mdadm" ]
-  then
-    PACKAGES="$PACKAGES mdadm"
-  fi
+  PACKAGES="$PACKAGES mdadm"
 fi
 
 # Refresh the package databases so pacstrap installs current versions even when
@@ -648,13 +626,6 @@ podman exec town-build busctl call \
   org.freedesktop.systemd1.Manager MaskUnitFiles "asbb" "${#MASK_UNITS[@]}" \
   "${MASK_UNITS[@]}" \
   false false
-
-if [ "$STORAGE_BACKEND" = "zfs" ]; then
-  podman exec town-build busctl call \
-    org.freedesktop.systemd1 /org/freedesktop/systemd1 \
-    org.freedesktop.systemd1.Manager EnableUnitFiles "asbb" 1 \
-    "zfs-mount.service" false false
-fi
 
 cleanup_build_container
 print_info "systemd D-Bus configuration complete."

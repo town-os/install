@@ -7,12 +7,12 @@
 # Contributors: please document any new settings you add here with a comment
 # explaining what the setting does, its valid values, and its default.
 
-# storage_backend: which filesystem to use for the Town OS storage pool.
-#   btrfs — Use btrfs (default). Lightweight, no kernel module dependency.
-#   zfs   — Use ZFS. Requires the ZFS kernel module (linux618-zfs).
-storage_backend: btrfs
+# The storage pool is always btrfs. There is no other backend: it needs no
+# out-of-tree kernel module, so it works identically on every architecture and
+# board this repo builds for, and ttyforce provisions all of its disk layouts
+# (Single/RAID1/RAID5) with mkfs.btrfs alone.
 
-# btrfs_raid_mode: how to handle multi-disk redundancy when storage_backend is btrfs.
+# btrfs_raid_mode: how to handle multi-disk redundancy.
 #   native — Use btrfs built-in raid profiles (default).
 #            1 disk:  single
 #            2 disks: raid1 data + raid1 metadata
@@ -23,7 +23,6 @@ storage_backend: btrfs
 #            write and is unusable for sqlite/prometheus/journald workloads.
 #   mdadm  — Create an mdadm array first, then format the array device as btrfs.
 #            Useful if you prefer md-raid for redundancy management.
-# This setting is ignored when storage_backend is zfs.
 btrfs_raid_mode: native
 
 # vm_disk_size: size of each virtual disk created by `make qemu` or `make virtualbox`.

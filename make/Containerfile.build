@@ -65,7 +65,7 @@ RUN pacman -Sy --noconfirm \
  && pacman -Syw --noconfirm --needed \
       $(grep -vE '^[[:space:]]*(#|$)' /tmp/base-packages.txt) btrfs-progs mdadm \
  ; case "$(uname -m)" in \
-     x86_64)  pacman -Syw --noconfirm --needed linux618 linux618-zfs || true ;; \
+     x86_64)  pacman -Syw --noconfirm --needed linux618 || true ;; \
      aarch64) pacman -Syw --noconfirm --needed linux-aarch64 || true ;; \
    esac \
  ; rm -f /tmp/base-packages.txt
